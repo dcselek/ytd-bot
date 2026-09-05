@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -272,3 +273,179 @@ def breadth_score(quotes: dict[str, Quote]) -> float:
         return 0.5
     positive = sum(1 for q in stocks if q.change_20d_pct > 0)
     return positive / len(stocks)
+
+
+# --- Harici ticker'lar (kullanici sepeti) -----------------------------------
+
+
+@dataclass
+class TickerQuote:
+    ticker: str
+    price_native: float
+    price_try: float
+    currency: str
+    change_1d_pct: float
+    change_5d_pct: float
+    change_20d_pct: float
+    as_of: datetime
+    name: str = ""
+    exchange: str = ""
+
+
+_FX_PAIR_BY_CURRENCY = {
+    "TRY": None,
+    "USD": "USDTRY=X",
+    "EUR": "EURTRY=X",
+    "GBP": "GBPTRY=X",
+    "JPY": "JPYTRY=X",
+    "CHF": "CHFTRY=X",
+    "CAD": "CADTRY=X",
+    "AUD": "AUDTRY=X",
+}
+
+
+def normalize_ticker(raw: str) -> str:
+    return re.sub(r"\s+", "", (raw or "").strip().upper())
+
+
+def resolve_ticker_meta(raw: str) -> dict[str, str] | None:
+    """Ticker'in yfinance'te var olup olmadigini dogrular; isim/parabirimi doner.
+
+    BIST kisaltmalari icin once ham sembol, olmazsa `.IS` dener.
+    """
+    base = normalize_ticker(raw)
+    if not base or len(base) > 32:
+        return None
+
+    candidates = [base]
+    if "." not in base and not base.endswith("=X"):
+        candidates.append(f"{base}.IS")
+
+    for cand in candidates:
+        try:
+            ticker = yf.Ticker(cand)
+            hist = ticker.history(period="5d", auto_adjust=True)
+            if hist is None or hist.empty:
+                continue
+            info: dict = {}
+            try:
+                info = ticker.info or {}
+            except Exception:  # noqa: BLE001
+                info = {}
+            currency = str(info.get("currency") or "").upper() or "USD"
+            name = (
+                str(info.get("shortName") or info.get("longName") or cand).strip() or cand
+            )
+            exchange = str(info.get("exchange") or info.get("fullExchangeName") or "").strip()
+            return {
+                "ticker": cand,
+                "name": name[:120],
+                "currency": currency,
+                "exchange": exchange[:40],
+            }
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Ticker cozumlenemedi (%s): %s", cand, exc)
+            continue
+    return None
+
+
+def fetch_ticker_quotes(
+    tickers: list[str],
+    meta_by_ticker: dict[str, dict[str, str]] | None = None,
+) -> dict[str, TickerQuote]:
+    """Harici ticker listesi icin TL bazli fiyat/momentum ceker."""
+    if not tickers:
+        return {}
+
+    meta_by_ticker = meta_by_ticker or {}
+    unique = list(dict.fromkeys(tickers))
+    currencies = {
+        (meta_by_ticker.get(t) or {}).get("currency", "USD").upper() for t in unique
+    }
+    fx_pairs = [
+        pair
+        for cur in currencies
+        if (pair := _FX_PAIR_BY_CURRENCY.get(cur)) is not None
+    ]
+    # Bilinmeyen para birimleri icin USD uzerinden ceviri denenecek.
+    if any(cur not in _FX_PAIR_BY_CURRENCY for cur in currencies):
+        if "USDTRY=X" not in fx_pairs:
+            fx_pairs.append("USDTRY=X")
+
+    download_list = unique + fx_pairs
+    try:
+        close = _download_close(download_list, period="3mo")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Harici ticker fiyatlari cekilemedi: %s", exc)
+        return {}
+
+    if close.empty:
+        return {}
+
+    fx_series: dict[str, pd.Series] = {}
+    for pair in fx_pairs:
+        if pair in close.columns:
+            series = close[pair].dropna()
+            if not series.empty:
+                fx_series[pair] = series
+
+    usdtry = fx_series.get("USDTRY=X")
+    result: dict[str, TickerQuote] = {}
+
+    for ticker in unique:
+        if ticker not in close.columns:
+            continue
+        series = close[ticker].dropna()
+        if series.empty:
+            continue
+
+        meta = meta_by_ticker.get(ticker) or {}
+        currency = str(meta.get("currency") or "USD").upper()
+        try_series = _external_to_try(series, currency, fx_series, usdtry)
+        if try_series is None or try_series.empty:
+            continue
+
+        last_index = try_series.index[-1]
+        as_of = (
+            last_index.to_pydatetime().replace(tzinfo=timezone.utc)
+            if hasattr(last_index, "to_pydatetime")
+            else storage.utcnow()
+        )
+        result[ticker] = TickerQuote(
+            ticker=ticker,
+            price_native=float(series.iloc[-1]),
+            price_try=float(try_series.iloc[-1]),
+            currency=currency,
+            change_1d_pct=_pct_change(try_series, 1),
+            change_5d_pct=_pct_change(try_series, 5),
+            change_20d_pct=_pct_change(try_series, 20),
+            as_of=as_of,
+            name=str(meta.get("name") or ticker),
+            exchange=str(meta.get("exchange") or ""),
+        )
+    return result
+
+
+def _external_to_try(
+    series: pd.Series,
+    currency: str,
+    fx_series: dict[str, pd.Series],
+    usdtry: pd.Series | None,
+) -> pd.Series | None:
+    if currency == "TRY":
+        return series
+
+    pair = _FX_PAIR_BY_CURRENCY.get(currency)
+    if pair and pair in fx_series:
+        aligned = fx_series[pair].reindex(series.index).ffill().bfill()
+        return series * aligned
+
+    if usdtry is not None and currency == "USD":
+        aligned = usdtry.reindex(series.index).ffill().bfill()
+        return series * aligned
+
+    if usdtry is not None and currency not in _FX_PAIR_BY_CURRENCY:
+        aligned = usdtry.reindex(series.index).ffill().bfill()
+        return series * aligned
+
+    return None

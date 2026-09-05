@@ -122,6 +122,18 @@ CREATE TABLE IF NOT EXISTS app_state (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS user_watchlist (
+    chat_id    INTEGER NOT NULL,
+    ticker     TEXT    NOT NULL,
+    weight     REAL    NOT NULL DEFAULT 0,
+    name       TEXT    NOT NULL DEFAULT '',
+    currency   TEXT    NOT NULL DEFAULT '',
+    exchange   TEXT    NOT NULL DEFAULT '',
+    created_at TEXT    NOT NULL,
+    PRIMARY KEY (chat_id, ticker)
+);
+CREATE INDEX IF NOT EXISTS idx_watchlist_chat ON user_watchlist (chat_id);
 """
 
 
@@ -532,3 +544,66 @@ def trade_count(risk_profile: str) -> int:
         "SELECT COUNT(*) AS n FROM trades WHERE risk_profile = ?", (risk_profile,)
     ).fetchone()
     return int(row["n"]) if row else 0
+
+
+# --- user watchlist --------------------------------------------------------
+
+
+def list_watchlist(chat_id: int) -> list[sqlite3.Row]:
+    return list(
+        connect()
+        .execute(
+            "SELECT * FROM user_watchlist WHERE chat_id = ? ORDER BY weight DESC, ticker ASC",
+            (chat_id,),
+        )
+        .fetchall()
+    )
+
+
+def watchlist_count(chat_id: int) -> int:
+    row = connect().execute(
+        "SELECT COUNT(*) AS n FROM user_watchlist WHERE chat_id = ?", (chat_id,)
+    ).fetchone()
+    return int(row["n"]) if row else 0
+
+
+def get_watchlist_item(chat_id: int, ticker: str) -> sqlite3.Row | None:
+    return connect().execute(
+        "SELECT * FROM user_watchlist WHERE chat_id = ? AND ticker = ?",
+        (chat_id, ticker),
+    ).fetchone()
+
+
+def upsert_watchlist_item(
+    chat_id: int,
+    ticker: str,
+    weight: float,
+    name: str,
+    currency: str,
+    exchange: str,
+) -> None:
+    with tx() as conn:
+        conn.execute(
+            "INSERT INTO user_watchlist "
+            "(chat_id, ticker, weight, name, currency, exchange, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(chat_id, ticker) DO UPDATE SET "
+            "weight = excluded.weight, name = excluded.name, "
+            "currency = excluded.currency, exchange = excluded.exchange",
+            (chat_id, ticker, weight, name, currency, exchange, iso(utcnow())),
+        )
+
+
+def remove_watchlist_item(chat_id: int, ticker: str) -> bool:
+    with tx() as conn:
+        cur = conn.execute(
+            "DELETE FROM user_watchlist WHERE chat_id = ? AND ticker = ?",
+            (chat_id, ticker),
+        )
+        return bool(cur.rowcount)
+
+
+def clear_watchlist(chat_id: int) -> int:
+    with tx() as conn:
+        cur = conn.execute("DELETE FROM user_watchlist WHERE chat_id = ?", (chat_id,))
+        return int(cur.rowcount or 0)

@@ -14,12 +14,14 @@ Sık görüş değiştirmez. Gerçek para kullanmaz.
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots)
 [![Anthropic](https://img.shields.io/badge/LLM-Anthropic%20optional-191919?logo=anthropic&logoColor=white)](https://www.anthropic.com/)
 [![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![yfinance](https://img.shields.io/badge/market%20data-yfinance-111111)](https://github.com/ranaroussi/yfinance)
 
+[![GitHub release](https://img.shields.io/github/v/release/dcselek/ytd-bot?color=1e88e5&label=release&logo=github&sort=semver)](https://github.com/dcselek/ytd-bot/releases/latest)
 [![GitHub stars](https://img.shields.io/github/stars/dcselek/ytd-bot?style=social)](https://github.com/dcselek/ytd-bot)
 [![GitHub issues](https://img.shields.io/github/issues/dcselek/ytd-bot)](https://github.com/dcselek/ytd-bot/issues)
 [![GitHub last commit](https://img.shields.io/github/last-commit/dcselek/ytd-bot)](https://github.com/dcselek/ytd-bot/commits)
@@ -54,6 +56,8 @@ Sık görüş değiştirmez. Gerçek para kullanmaz.
   yoksa anahtar kelime tabanlı yedek ile çalışmaya devam eder.
 - **3 risk profili.** Düşük / orta / yüksek — her biri 100.000 TL temsilî
   sermaye ile başlar; komisyon dahil simüle edilir.
+- **Senin sepetin (`/sepetim`).** Kendi ticker listeni ekle (BIST, ABD, Avrupa,
+  Japonya…); TL fiyat + ilgili haber takibi.
 - **Şeffaf gerekçe.** Her değişim nedeniyle kaydedilir; `/gecmis` ile izlenir.
 - **Telegram-native.** Sepet, portföy, performans ve bildirimler sohbet içinde.
 
@@ -171,6 +175,7 @@ cp .env.example .env
 | `EMERGENCY_SWITCH_CONFIDENCE` | Hayır | Acil istisna eşiği |
 | `NEWS_LOOKBACK_HOURS` | Hayır | Haber bakış penceresi |
 | `MAX_NEWS_ITEMS` | Hayır | Döngü başına max haber |
+| `MAX_WATCHLIST_ITEMS` | Hayır | `/sepetim` max sembol, varsayılan `15` |
 | `DB_PATH` | Hayır | SQLite yolu |
 
 Tam şablon: [`.env.example`](.env.example)
@@ -202,7 +207,8 @@ Telegram olmadan tek döngü test:
 | Komut | Ne yapar |
 |---|---|
 | `/start` | Karşılama + risk profili seçimi |
-| `/sepet` | Güncel sepet, ağırlıklar, istikrar, gerekçeler |
+| `/sepet` | Botun temsilî sepeti, ağırlıklar, gerekçeler |
+| `/sepetim` | Senin takip sepetin (ekle / sil / haber) |
 | `/portfoy` | Temsilî kâr/zarar + BIST100 / likit / altın / dolar referansları |
 | `/performans` | Üç risk profilinin yan yana karşılaştırması |
 | `/durum` | Piyasa görüşü, son karar, değişim olasılığı |
@@ -211,6 +217,19 @@ Telegram olmadan tek döngü test:
 | `/profil` | Risk profilini değiştir |
 | `/bildirim` | Bildirimleri aç/kapat |
 | `/calistir` | Analiz döngüsünü elle tetikle (`ADMIN_CHAT_IDS` ile kısıtlanabilir) |
+
+### `/sepetim` alt komutları
+
+```text
+/sepetim                    → liste + TL fiyat / momentum
+/sepetim ekle AAPL 30       → ekle (ağırlık opsiyonel, 0–100)
+/sepetim sil THYAO.IS       → çıkar
+/sepetim haber              → sepetinle ilgili RSS haberleri
+/sepetim temizle            → tümünü sil
+/sepetim yardim             → yardım
+```
+
+Örnek çoklu borsa: `AAPL`, `QQQ`, `THYAO` / `THYAO.IS`, `VWCE.DE`, `7203.T`
 
 ---
 
@@ -246,6 +265,7 @@ ytd-bot/
     ├── analysis.py         # LLM analizi + kural tabanlı yedek
     ├── baskets.py          # Risk profili × görüş → ağırlıklar
     ├── discipline.py       # "Değişebilir mi?" karar motoru
+    ├── watchlist.py        # Kullanıcı takip sepeti (/sepetim)
     ├── portfolio.py        # Temsilî alım/satım, PnL, referanslar
     ├── formatting.py       # Telegram mesaj şablonları
     ├── engine.py           # Döngü orkestrasyonu
@@ -280,3 +300,7 @@ Issue ve PR'lar memnuniyetle karşılanır. Büyük değişiklikler için önce 
 
 [MIT](LICENSE) — özgürce kullanın, değiştirin, paylaşın.
 Katkılar da aynı lisans altında kabul edilir.
+
+## Sürüm
+
+Güncel sürüm: **0.1.0** — ayrıntılar [CHANGELOG.md](CHANGELOG.md).

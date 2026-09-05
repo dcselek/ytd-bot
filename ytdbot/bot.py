@@ -18,7 +18,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from . import discipline, engine, formatting, market, portfolio, storage
+from . import discipline, engine, formatting, market, portfolio, storage, watchlist
 from .baskets import RISK_PROFILES, RISK_PROFILE_EMOJI, RISK_PROFILE_TR
 from .config import settings
 
@@ -177,6 +177,83 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(update, formatting.help_message())
 
 
+async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from ytdbot import __version__
+
+    await _reply(
+        update,
+        f"🤖 <b>YTD Bot</b> · sürüm <code>{__version__}</code>\n"
+        f"<a href=\"https://github.com/dcselek/ytd-bot/releases\">GitHub releases</a>",
+    )
+
+
+async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Kullanici takip sepeti: /sepetim [ekle|sil|haber|temizle|yardim] ..."""
+    chat_id = update.effective_chat.id
+    storage.upsert_subscriber(chat_id)
+    args = [a.strip() for a in (context.args or []) if a.strip()]
+
+    if not args:
+        await _reply(update, "⏳ Sepetin fiyatlanıyor...")
+        snap = await asyncio.to_thread(watchlist.snapshot, chat_id)
+        await _reply(update, formatting.watchlist_message(snap))
+        return
+
+    action = args[0].lower()
+    if action in ("yardim", "help", "?"):
+        await _reply(update, formatting.watchlist_help_message())
+        return
+
+    if action in ("ekle", "add", "+"):
+        if len(args) < 2:
+            await _reply(
+                update,
+                "Kullanım: <code>/sepetim ekle TICKER [ağırlık]</code>\n"
+                "Örnek: <code>/sepetim ekle AAPL 30</code>",
+            )
+            return
+        await _reply(update, "⏳ Ticker doğrulanıyor...")
+        result = await asyncio.to_thread(
+            watchlist.add_item, chat_id, args[1], args[2] if len(args) > 2 else None
+        )
+        await _reply(update, result.message)
+        if result.ok:
+            snap = await asyncio.to_thread(watchlist.snapshot, chat_id)
+            await _reply(update, formatting.watchlist_message(snap))
+        return
+
+    if action in ("sil", "remove", "rm", "-"):
+        if len(args) < 2:
+            await _reply(update, "Kullanım: <code>/sepetim sil TICKER</code>")
+            return
+        result = watchlist.remove_item(chat_id, args[1])
+        await _reply(update, result.message)
+        return
+
+    if action in ("temizle", "clear", "reset"):
+        result = watchlist.clear_items(chat_id)
+        await _reply(update, result.message)
+        return
+
+    if action in ("haber", "haberler", "news"):
+        await _reply(update, "⏳ Sepetin için haberler taranıyor...")
+        matches = await asyncio.to_thread(watchlist.related_news, chat_id)
+        await _reply(update, formatting.watchlist_news_message(matches))
+        return
+
+    # Bilinmeyen alt komut: belki dogrudan ticker verilmis
+    if action not in ("liste", "list", "goster", "show"):
+        await _reply(
+            update,
+            "Bilinmeyen alt komut. <code>/sepetim yardim</code> yazın.\n"
+            "Örnek: <code>/sepetim ekle THYAO.IS 20</code>",
+        )
+        return
+
+    snap = await asyncio.to_thread(watchlist.snapshot, chat_id)
+    await _reply(update, formatting.watchlist_message(snap))
+
+
 async def cmd_run_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     if settings.admin_chat_ids and chat_id not in settings.admin_chat_ids:
@@ -242,7 +319,7 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
                     else ""
                 ),
                 "",
-                "Detay için /portfoy · /sepet · /durum",
+                "Detay için /portfoy · /sepet · /sepetim · /durum",
                 "",
                 formatting.DISCLAIMER,
             ]
@@ -289,7 +366,8 @@ async def _send(application: Application, chat_id: int, text: str) -> None:
 async def _post_init(application: Application) -> None:
     await application.bot.set_my_commands(
         [
-            ("sepet", "Güncel sepet ve gerekçeler"),
+            ("sepet", "Botun temsilî sepeti"),
+            ("sepetim", "Senin takip sepetin"),
             ("portfoy", "Temsilî portföy kâr/zarar"),
             ("performans", "Profillerin karşılaştırması"),
             ("durum", "Piyasa görüşü ve istikrar"),
@@ -297,6 +375,7 @@ async def _post_init(application: Application) -> None:
             ("gecmis", "Sepet değişim geçmişi"),
             ("profil", "Risk profilini değiştir"),
             ("bildirim", "Bildirimleri aç/kapat"),
+            ("surum", "Bot sürümü"),
             ("yardim", "Komut listesi"),
         ]
     )
@@ -320,12 +399,14 @@ def build_application() -> Application:
     application.add_handler(CommandHandler(["yardim", "help"], cmd_help))
     application.add_handler(CommandHandler(["profil", "profile"], cmd_profile))
     application.add_handler(CommandHandler(["sepet", "basket"], cmd_basket))
+    application.add_handler(CommandHandler(["sepetim", "watchlist", "mybasket"], cmd_watchlist))
     application.add_handler(CommandHandler(["portfoy", "portfolio"], cmd_portfolio))
     application.add_handler(CommandHandler(["performans", "performance"], cmd_performance))
     application.add_handler(CommandHandler(["durum", "status"], cmd_status))
     application.add_handler(CommandHandler(["analiz", "analysis"], cmd_analysis))
     application.add_handler(CommandHandler(["gecmis", "history"], cmd_history))
     application.add_handler(CommandHandler(["bildirim", "notifications"], cmd_notifications))
+    application.add_handler(CommandHandler(["surum", "version"], cmd_version))
     application.add_handler(CommandHandler(["calistir", "runnow"], cmd_run_now))
     application.add_handler(
         CallbackQueryHandler(on_profile_selected, pattern=f"^{PROFILE_CALLBACK_PREFIX}")

@@ -382,6 +382,9 @@ def welcome_message() -> str:
             "döngüde doğrulanması gerekir.",
             "• Değişim yaparsam nedenini danışman gibi tek tek açıklarım.",
             "",
+            "Ayrıca <b>/sepetim</b> ile kendi takip sepetini oluşturabilirsin "
+            "(farklı ülke borsaları dahil).",
+            "",
             f"Her risk profili için <b>{fmt_try(settings.start_capital_try, 0)}</b> temsilî "
             "sermaye ile başlıyorum ve kâr/zararı şeffaf şekilde takip ediyorum.",
             "",
@@ -395,7 +398,8 @@ def help_message() -> str:
         [
             "📖 <b>Komutlar</b>",
             "",
-            "/sepet — Güncel sepetin ve gerekçeleri",
+            "/sepet — Botun temsilî sepeti ve gerekçeleri",
+            "/sepetim — Senin takip sepetin (ekle / sil / haber)",
             "/portfoy — Temsilî portföyün kâr/zarar durumu",
             "/performans — Tüm risk profillerinin karşılaştırması",
             "/durum — Piyasa görüşü, istikrar ve son karar",
@@ -403,11 +407,133 @@ def help_message() -> str:
             "/gecmis — Sepet değişim geçmişi",
             "/profil — Risk profilini değiştir",
             "/bildirim — Bildirimleri aç/kapat",
+            "/surum — Bot sürümü",
             "/yardim — Bu mesaj",
             "",
             DISCLAIMER,
         ]
     )
+
+
+def watchlist_help_message() -> str:
+    return "\n".join(
+        [
+            "🧺 <b>Senin sepetin (/sepetim)</b>",
+            "",
+            "Botun temsilî sepetinden bağımsızdır. Kendi takip listen:",
+            "",
+            "<code>/sepetim</code> — liste + TL fiyatlar",
+            "<code>/sepetim ekle AAPL 30</code> — ekle (ağırlık opsiyonel)",
+            "<code>/sepetim sil THYAO.IS</code> — çıkar",
+            "<code>/sepetim haber</code> — sepetinle ilgili haberler",
+            "<code>/sepetim temizle</code> — tümünü sil",
+            "",
+            "Çoklu borsa örnekleri:",
+            "• <code>AAPL</code> · <code>QQQ</code> (ABD)",
+            "• <code>THYAO.IS</code> veya <code>THYAO</code> (BIST)",
+            "• <code>VWCE.DE</code> (Almanya)",
+            "• <code>7203.T</code> (Japonya)",
+            "",
+            f"En fazla {settings.max_watchlist_items} sembol.",
+            "",
+            DISCLAIMER,
+        ]
+    )
+
+
+def watchlist_message(snap) -> str:
+    from .watchlist import WatchSnapshot  # yerel import dongusel bagimlilik icin
+
+    assert isinstance(snap, WatchSnapshot)
+    parts = [
+        "🧺 <b>Senin takip sepetin</b>",
+        "<i>Bot önerisi değil — senin tanımladığın liste.</i>",
+        "",
+    ]
+    if not snap.items:
+        parts += [
+            "Sepetin boş.",
+            "",
+            "Eklemek için: <code>/sepetim ekle AAPL 25</code>",
+            "Yardım: <code>/sepetim yardim</code>",
+            "",
+            DISCLAIMER,
+        ]
+        return "\n".join(parts)
+
+    for item in snap.items:
+        weight_bit = f"%{fmt_number(item.weight, 0)} · " if item.weight else ""
+        exch = f" · {escape(item.exchange)}" if item.exchange else ""
+        if item.quote:
+            q = item.quote
+            native = ""
+            if q.currency and q.currency != "TRY":
+                native = f" ({fmt_number(q.price_native, 2)} {escape(q.currency)})"
+            parts.append(
+                f"• <b>{escape(item.ticker)}</b> — {escape(item.name)}{exch}\n"
+                f"  {weight_bit}{fmt_try(q.price_try)}{native} · "
+                f"1g {pnl_emoji(q.change_1d_pct)} {fmt_pct(q.change_1d_pct, 1)} · "
+                f"5g {fmt_pct(q.change_5d_pct, 1)} · "
+                f"20g {fmt_pct(q.change_20d_pct, 1)}"
+            )
+        else:
+            parts.append(
+                f"• <b>{escape(item.ticker)}</b> — {escape(item.name)}{exch}\n"
+                f"  {weight_bit}<i>fiyat alınamadı</i>"
+            )
+
+    parts.append("")
+    if snap.weight_sum > 0:
+        parts.append(f"Ağırlık toplamı: <b>%{fmt_number(snap.weight_sum, 1)}</b>")
+        if abs(snap.weight_sum - 100) > 0.5:
+            parts.append("<i>Toplam 100 değil; ağırlıklı özet yine de hesaplanır.</i>")
+    if snap.weighted_1d_pct is not None:
+        parts.append(
+            f"Sepet özeti (ağırlıklı): 1g {pnl_emoji(snap.weighted_1d_pct)} "
+            f"<b>{fmt_pct(snap.weighted_1d_pct, 1)}</b> · "
+            f"5g {fmt_pct(snap.weighted_5d_pct or 0, 1)} · "
+            f"20g {fmt_pct(snap.weighted_20d_pct or 0, 1)}"
+        )
+
+    parts += [
+        "",
+        "Haberler: /sepetim haber · Yardım: /sepetim yardim",
+        "",
+        DISCLAIMER,
+    ]
+    return "\n".join(parts)
+
+
+def watchlist_news_message(matches: list) -> str:
+    parts = [
+        "📰 <b>Sepetinle ilgili haberler</b>",
+        "",
+    ]
+    if not matches:
+        parts += [
+            "Eşleşen haber bulunamadı.",
+            "Sepete sembol ekleyip tekrar deneyin: <code>/sepetim ekle …</code>",
+            "",
+            DISCLAIMER,
+        ]
+        return "\n".join(parts)
+
+    for article, tickers in matches:
+        stamp = (
+            article.published_at.astimezone(TR_TZ).strftime("%d.%m %H:%M")
+            if article.published_at
+            else "—"
+        )
+        tag = ", ".join(tickers[:3])
+        link = f' — <a href="{escape(article.link)}">link</a>' if article.link else ""
+        parts.append(
+            f"[T{article.tier}] <b>{escape(tag)}</b> · {escape(article.source)} · {stamp}\n"
+            f"{escape(article.title)}{link}"
+        )
+        parts.append("")
+
+    parts.append(DISCLAIMER)
+    return "\n".join(parts)
 
 
 def performance_overview(views: list[PortfolioView], bench: dict[str, float]) -> str:

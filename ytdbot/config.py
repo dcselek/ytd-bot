@@ -75,6 +75,9 @@ class Settings:
     news_lookback_hours: int = field(default_factory=lambda: _int("NEWS_LOOKBACK_HOURS", 12))
     max_news_items: int = field(default_factory=lambda: _int("MAX_NEWS_ITEMS", 40))
 
+    # Kullanici takip sepeti (/sepetim)
+    max_watchlist_items: int = field(default_factory=lambda: _int("MAX_WATCHLIST_ITEMS", 15))
+
     @property
     def has_llm(self) -> bool:
         return bool(self.anthropic_api_key)
