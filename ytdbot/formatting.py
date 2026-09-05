@@ -423,16 +423,19 @@ def watchlist_help_message() -> str:
             "Botun temsilî sepetinden bağımsızdır. Kendi takip listen:",
             "",
             "<code>/sepetim</code> — liste + TL fiyatlar",
-            "<code>/sepetim ekle AAPL 30</code> — ekle (ağırlık opsiyonel)",
-            "<code>/sepetim sil THYAO.IS</code> — çıkar",
-            "<code>/sepetim haber</code> — sepetinle ilgili haberler",
+            "<code>/sepetim ekle AAPL 30</code> — hisse/ETF (Yahoo)",
+            "<code>/sepetim ekle MAC tefas 20</code> — TEFAS fonu",
+            "<code>/sepetim ekle MAC yahoo</code> — aynı kodun ABD karşılığı",
+            "<code>/sepetim sil TEFAS:MAC</code> — çıkar",
+            "<code>/sepetim haber</code> — ilgili haberler",
+            "<code>/sepetim vs</code> — bot sepetiyle 20g karşılaştırma",
+            "<code>/sepetim uyari 3</code> — 1g ±%3 hareket uyarısı",
+            "<code>/sepetim uyari kapat</code> — uyarıyı kapat",
             "<code>/sepetim temizle</code> — tümünü sil",
             "",
-            "Çoklu borsa örnekleri:",
-            "• <code>AAPL</code> · <code>QQQ</code> (ABD)",
-            "• <code>THYAO.IS</code> veya <code>THYAO</code> (BIST)",
-            "• <code>VWCE.DE</code> (Almanya)",
-            "• <code>7203.T</code> (Japonya)",
+            "📌 <b>TEFAS notu:</b> Kısa fon kodları (MAC, TTE…) Yahoo’da ABD "
+            "hissesiyle (NYSE/PCX) çakışabilir. Bot otomatik önce TEFAS’a bakar; "
+            "zorlamak için <code>tefas</code> / <code>yahoo</code> yazın.",
             "",
             f"En fazla {settings.max_watchlist_items} sembol.",
             "",
@@ -442,7 +445,7 @@ def watchlist_help_message() -> str:
 
 
 def watchlist_message(snap) -> str:
-    from .watchlist import WatchSnapshot  # yerel import dongusel bagimlilik icin
+    from .watchlist import WatchSnapshot
 
     assert isinstance(snap, WatchSnapshot)
     parts = [
@@ -454,7 +457,8 @@ def watchlist_message(snap) -> str:
         parts += [
             "Sepetin boş.",
             "",
-            "Eklemek için: <code>/sepetim ekle AAPL 25</code>",
+            "Hisse: <code>/sepetim ekle AAPL 25</code>",
+            "TEFAS fon: <code>/sepetim ekle MAC tefas 20</code>",
             "Yardım: <code>/sepetim yardim</code>",
             "",
             DISCLAIMER,
@@ -463,14 +467,19 @@ def watchlist_message(snap) -> str:
 
     for item in snap.items:
         weight_bit = f"%{fmt_number(item.weight, 0)} · " if item.weight else ""
-        exch = f" · {escape(item.exchange)}" if item.exchange else ""
+        if item.exchange == "TEFAS" or item.ticker.startswith("TEFAS:"):
+            exch = " · <b>TEFAS</b>"
+            display = item.ticker.removeprefix("TEFAS:")
+        else:
+            exch = f" · {escape(item.exchange)}" if item.exchange else ""
+            display = item.ticker
         if item.quote:
             q = item.quote
             native = ""
             if q.currency and q.currency != "TRY":
                 native = f" ({fmt_number(q.price_native, 2)} {escape(q.currency)})"
             parts.append(
-                f"• <b>{escape(item.ticker)}</b> — {escape(item.name)}{exch}\n"
+                f"• <b>{escape(display)}</b> — {escape(item.name)}{exch}\n"
                 f"  {weight_bit}{fmt_try(q.price_try)}{native} · "
                 f"1g {pnl_emoji(q.change_1d_pct)} {fmt_pct(q.change_1d_pct, 1)} · "
                 f"5g {fmt_pct(q.change_5d_pct, 1)} · "
@@ -478,7 +487,7 @@ def watchlist_message(snap) -> str:
             )
         else:
             parts.append(
-                f"• <b>{escape(item.ticker)}</b> — {escape(item.name)}{exch}\n"
+                f"• <b>{escape(display)}</b> — {escape(item.name)}{exch}\n"
                 f"  {weight_bit}<i>fiyat alınamadı</i>"
             )
 
@@ -497,7 +506,7 @@ def watchlist_message(snap) -> str:
 
     parts += [
         "",
-        "Haberler: /sepetim haber · Yardım: /sepetim yardim",
+        "Haber: /sepetim haber · Karşılaştır: /sepetim vs · Yardım: /sepetim yardim",
         "",
         DISCLAIMER,
     ]
@@ -524,7 +533,7 @@ def watchlist_news_message(matches: list) -> str:
             if article.published_at
             else "—"
         )
-        tag = ", ".join(tickers[:3])
+        tag = ", ".join(t.removeprefix("TEFAS:") for t in tickers[:3])
         link = f' — <a href="{escape(article.link)}">link</a>' if article.link else ""
         parts.append(
             f"[T{article.tier}] <b>{escape(tag)}</b> · {escape(article.source)} · {stamp}\n"
@@ -533,6 +542,54 @@ def watchlist_news_message(matches: list) -> str:
         parts.append("")
 
     parts.append(DISCLAIMER)
+    return "\n".join(parts)
+
+
+def watchlist_compare_message(result, profile_tr: str) -> str:
+    parts = [
+        "⚖️ <b>Sepetin vs bot sepeti</b>",
+        f"<i>Bot profili: {escape(profile_tr)} · son ~20 işlem günü (yaklaşık)</i>",
+        "",
+    ]
+    if result.watch_items == 0:
+        parts += ["Senin sepetin boş. Önce <code>/sepetim ekle …</code>", "", DISCLAIMER]
+        return "\n".join(parts)
+
+    w = result.watch_20d
+    b = result.bot_20d
+    parts.append(
+        f"🧺 Senin sepetin: "
+        + (f"{pnl_emoji(w)} <b>{fmt_pct(w, 1)}</b>" if w is not None else "<i>hesaplanamadı</i>")
+    )
+    parts.append(
+        f"🤖 Bot sepeti: "
+        + (f"{pnl_emoji(b)} <b>{fmt_pct(b, 1)}</b>" if b is not None else "<i>henüz yok</i>")
+    )
+    if w is not None and b is not None:
+        diff = w - b
+        parts.append(f"Fark: <b>{fmt_pct(diff, 1)}</b> (sen − bot)")
+    parts += [
+        "",
+        "<i>Bu bir yarışma skoru değil; eğitim amaçlı kaba karşılaştırmadır.</i>",
+        "",
+        DISCLAIMER,
+    ]
+    return "\n".join(parts)
+
+
+def watchlist_alerts_message(hits: list, threshold: float) -> str:
+    parts = [
+        f"🚨 <b>Sepet uyarısı</b> (±%{fmt_number(threshold, 1)} / 1g)",
+        "",
+    ]
+    for item in hits:
+        q = item.quote
+        display = item.ticker.removeprefix("TEFAS:")
+        parts.append(
+            f"• <b>{escape(display)}</b> — {escape(item.name)}: "
+            f"{pnl_emoji(q.change_1d_pct)} <b>{fmt_pct(q.change_1d_pct, 1)}</b>"
+        )
+    parts += ["", DISCLAIMER]
     return "\n".join(parts)
 
 

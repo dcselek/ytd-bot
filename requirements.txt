@@ -3,4 +3,5 @@ yfinance>=1.7.0
 feedparser==6.0.11
 anthropic==0.34.2
 httpx==0.27.0
+tefasmak>=1.0.1
 python-dotenv==1.0.1

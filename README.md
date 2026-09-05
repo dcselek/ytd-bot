@@ -14,7 +14,7 @@ Sık görüş değiştirmez. Gerçek para kullanmaz.
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots)
 [![Anthropic](https://img.shields.io/badge/LLM-Anthropic%20optional-191919?logo=anthropic&logoColor=white)](https://www.anthropic.com/)
@@ -57,7 +57,7 @@ Sık görüş değiştirmez. Gerçek para kullanmaz.
 - **3 risk profili.** Düşük / orta / yüksek — her biri 100.000 TL temsilî
   sermaye ile başlar; komisyon dahil simüle edilir.
 - **Senin sepetin (`/sepetim`).** Kendi ticker listeni ekle (BIST, ABD, Avrupa,
-  Japonya…); TL fiyat + ilgili haber takibi.
+  Japonya, **TEFAS fonları**); TL fiyat + ilgili haber + botla karşılaştırma.
 - **Şeffaf gerekçe.** Her değişim nedeniyle kaydedilir; `/gecmis` ile izlenir.
 - **Telegram-native.** Sepet, portföy, performans ve bildirimler sohbet içinde.
 
@@ -208,7 +208,7 @@ Telegram olmadan tek döngü test:
 |---|---|
 | `/start` | Karşılama + risk profili seçimi |
 | `/sepet` | Botun temsilî sepeti, ağırlıklar, gerekçeler |
-| `/sepetim` | Senin takip sepetin (ekle / sil / haber) |
+| `/sepetim` | Senin takip sepetin (TEFAS / Yahoo, haber, vs, uyarı) |
 | `/portfoy` | Temsilî kâr/zarar + BIST100 / likit / altın / dolar referansları |
 | `/performans` | Üç risk profilinin yan yana karşılaştırması |
 | `/durum` | Piyasa görüşü, son karar, değişim olasılığı |
@@ -216,20 +216,30 @@ Telegram olmadan tek döngü test:
 | `/gecmis` | Sepet değişim geçmişi ve nedenleri |
 | `/profil` | Risk profilini değiştir |
 | `/bildirim` | Bildirimleri aç/kapat |
+| `/surum` | Bot sürümü |
 | `/calistir` | Analiz döngüsünü elle tetikle (`ADMIN_CHAT_IDS` ile kısıtlanabilir) |
 
 ### `/sepetim` alt komutları
 
 ```text
-/sepetim                    → liste + TL fiyat / momentum
-/sepetim ekle AAPL 30       → ekle (ağırlık opsiyonel, 0–100)
-/sepetim sil THYAO.IS       → çıkar
-/sepetim haber              → sepetinle ilgili RSS haberleri
-/sepetim temizle            → tümünü sil
-/sepetim yardim             → yardım
+/sepetim                         → liste + TL fiyat / momentum
+/sepetim ekle AAPL 30            → hisse/ETF (Yahoo)
+/sepetim ekle MAC tefas 20       → TEFAS yatırım fonu
+/sepetim ekle MAC yahoo          → aynı kodun ABD (NYSE/PCX) karşılığı
+/sepetim sil TEFAS:MAC           → çıkar
+/sepetim haber                   → sepetinle ilgili RSS haberleri
+/sepetim vs                      → bot sepetiyle ~20g karşılaştırma
+/sepetim uyari 3                 → 1g ±%3 hareket uyarısı (günlük özette)
+/sepetim uyari kapat             → uyarıyı kapat
+/sepetim temizle                 → tümünü sil
+/sepetim yardim                  → yardım
 ```
 
-Örnek çoklu borsa: `AAPL`, `QQQ`, `THYAO` / `THYAO.IS`, `VWCE.DE`, `7203.T`
+**TEFAS vs Yahoo/PCX:** Kısa fon kodları (`MAC`, `TTE`…) Yahoo’da ABD hissesiyle
+çakışabilir. Bot otomatik önce [TEFAS](https://www.tefas.gov.tr/)’a bakar.
+Zorlamak için `tefas` veya `yahoo` yazın.
+
+Örnek çoklu borsa: `AAPL`, `QQQ`, `THYAO.IS`, `VWCE.DE`, `7203.T`, `TEFAS:MAC`
 
 ---
 
@@ -266,6 +276,7 @@ ytd-bot/
     ├── baskets.py          # Risk profili × görüş → ağırlıklar
     ├── discipline.py       # "Değişebilir mi?" karar motoru
     ├── watchlist.py        # Kullanıcı takip sepeti (/sepetim)
+    ├── tefas.py            # TEFAS fon fiyatları (tefasmak)
     ├── portfolio.py        # Temsilî alım/satım, PnL, referanslar
     ├── formatting.py       # Telegram mesaj şablonları
     ├── engine.py           # Döngü orkestrasyonu
@@ -303,4 +314,4 @@ Katkılar da aynı lisans altında kabul edilir.
 
 ## Sürüm
 
-Güncel sürüm: **0.1.0** — ayrıntılar [CHANGELOG.md](CHANGELOG.md).
+Güncel sürüm: **0.2.0** — ayrıntılar [CHANGELOG.md](CHANGELOG.md).

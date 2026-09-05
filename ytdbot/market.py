@@ -308,18 +308,66 @@ def normalize_ticker(raw: str) -> str:
     return re.sub(r"\s+", "", (raw or "").strip().upper())
 
 
-def resolve_ticker_meta(raw: str) -> dict[str, str] | None:
-    """Ticker'in yfinance'te var olup olmadigini dogrular; isim/parabirimi doner.
+def resolve_ticker_meta(raw: str, venue: str | None = None) -> dict[str, str] | None:
+    """Ticker cozumler. venue: tefas | yahoo | None (otomatik).
 
-    BIST kisaltmalari icin once ham sembol, olmazsa `.IS` dener.
+    Kisa TR fon kodlari (MAC, TTE...) Yahoo'da ABD hissesiyle carpisir (NYSE/PCX).
+    Otomatik modda noktasiz 2-5 harfli kodlarda once TEFAS denenir.
     """
+    from . import tefas
+
     base = normalize_ticker(raw)
-    if not base or len(base) > 32:
+    if not base or len(base) > 40:
         return None
 
-    candidates = [base]
-    if "." not in base and not base.endswith("=X"):
-        candidates.append(f"{base}.IS")
+    forced = (venue or "").strip().lower()
+    if base.startswith(tefas.TEFAS_PREFIX):
+        forced = "tefas"
+
+    if forced in ("tefas", "tefaş", "fon"):
+        meta = tefas.resolve_fund(base)
+        if meta is None:
+            return None
+        return {
+            "ticker": tefas.storage_ticker(meta.code),
+            "name": meta.name,
+            "currency": "TRY",
+            "exchange": "TEFAS",
+            "venue": "tefas",
+            "category": meta.category,
+        }
+
+    if forced in ("yahoo", "yf", "us", "bist"):
+        return _resolve_yahoo(base, prefer_is=(forced == "bist"))
+
+    # Otomatik: kisa kod -> once TEFAS
+    if tefas.looks_like_fund_code(base) and "." not in base and not base.endswith("=X"):
+        meta = tefas.resolve_fund(base)
+        if meta is not None:
+            return {
+                "ticker": tefas.storage_ticker(meta.code),
+                "name": meta.name,
+                "currency": "TRY",
+                "exchange": "TEFAS",
+                "venue": "tefas",
+                "category": meta.category,
+            }
+
+    return _resolve_yahoo(base, prefer_is=False)
+
+
+def _resolve_yahoo(base: str, prefer_is: bool) -> dict[str, str] | None:
+    candidates: list[str] = []
+    clean = base
+    if clean.startswith("TEFAS:"):
+        return None
+    if prefer_is and "." not in clean:
+        candidates.append(f"{clean}.IS")
+        candidates.append(clean)
+    else:
+        candidates.append(clean)
+        if "." not in clean and not clean.endswith("=X"):
+            candidates.append(f"{clean}.IS")
 
     for cand in candidates:
         try:
@@ -342,6 +390,8 @@ def resolve_ticker_meta(raw: str) -> dict[str, str] | None:
                 "name": name[:120],
                 "currency": currency,
                 "exchange": exchange[:40],
+                "venue": "yahoo",
+                "category": "",
             }
         except Exception as exc:  # noqa: BLE001
             log.debug("Ticker cozumlenemedi (%s): %s", cand, exc)
@@ -353,34 +403,58 @@ def fetch_ticker_quotes(
     tickers: list[str],
     meta_by_ticker: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, TickerQuote]:
-    """Harici ticker listesi icin TL bazli fiyat/momentum ceker."""
+    """Harici ticker listesi icin TL bazli fiyat/momentum (Yahoo + TEFAS)."""
     if not tickers:
         return {}
 
+    from . import tefas
+
     meta_by_ticker = meta_by_ticker or {}
     unique = list(dict.fromkeys(tickers))
+    tefas_tickers = [t for t in unique if tefas.is_tefas_ticker(t)]
+    yahoo_tickers = [t for t in unique if not tefas.is_tefas_ticker(t)]
+
+    result: dict[str, TickerQuote] = {}
+
+    if tefas_tickers:
+        for key, q in tefas.fetch_quotes(tefas_tickers).items():
+            result[key] = TickerQuote(
+                ticker=key,
+                price_native=q.price_try,
+                price_try=q.price_try,
+                currency="TRY",
+                change_1d_pct=q.change_1d_pct,
+                change_5d_pct=q.change_5d_pct,
+                change_20d_pct=q.change_20d_pct,
+                as_of=q.as_of,
+                name=q.name,
+                exchange="TEFAS",
+            )
+
+    if not yahoo_tickers:
+        return result
+
     currencies = {
-        (meta_by_ticker.get(t) or {}).get("currency", "USD").upper() for t in unique
+        (meta_by_ticker.get(t) or {}).get("currency", "USD").upper() for t in yahoo_tickers
     }
     fx_pairs = [
         pair
         for cur in currencies
         if (pair := _FX_PAIR_BY_CURRENCY.get(cur)) is not None
     ]
-    # Bilinmeyen para birimleri icin USD uzerinden ceviri denenecek.
     if any(cur not in _FX_PAIR_BY_CURRENCY for cur in currencies):
         if "USDTRY=X" not in fx_pairs:
             fx_pairs.append("USDTRY=X")
 
-    download_list = unique + fx_pairs
+    download_list = yahoo_tickers + fx_pairs
     try:
         close = _download_close(download_list, period="3mo")
     except Exception as exc:  # noqa: BLE001
         log.warning("Harici ticker fiyatlari cekilemedi: %s", exc)
-        return {}
+        return result
 
     if close.empty:
-        return {}
+        return result
 
     fx_series: dict[str, pd.Series] = {}
     for pair in fx_pairs:
@@ -390,9 +464,8 @@ def fetch_ticker_quotes(
                 fx_series[pair] = series
 
     usdtry = fx_series.get("USDTRY=X")
-    result: dict[str, TickerQuote] = {}
 
-    for ticker in unique:
+    for ticker in yahoo_tickers:
         if ticker not in close.columns:
             continue
         series = close[ticker].dropna()

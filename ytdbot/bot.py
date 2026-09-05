@@ -188,7 +188,7 @@ async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Kullanici takip sepeti: /sepetim [ekle|sil|haber|temizle|yardim] ..."""
+    """Kullanici takip sepeti: /sepetim [ekle|sil|haber|vs|uyari|temizle|yardim] ..."""
     chat_id = update.effective_chat.id
     storage.upsert_subscriber(chat_id)
     args = [a.strip() for a in (context.args or []) if a.strip()]
@@ -208,14 +208,12 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if len(args) < 2:
             await _reply(
                 update,
-                "Kullanım: <code>/sepetim ekle TICKER [ağırlık]</code>\n"
-                "Örnek: <code>/sepetim ekle AAPL 30</code>",
+                "Kullanım: <code>/sepetim ekle TICKER [tefas|yahoo] [ağırlık]</code>\n"
+                "Örnek: <code>/sepetim ekle MAC tefas 20</code>",
             )
             return
-        await _reply(update, "⏳ Ticker doğrulanıyor...")
-        result = await asyncio.to_thread(
-            watchlist.add_item, chat_id, args[1], args[2] if len(args) > 2 else None
-        )
+        await _reply(update, "⏳ Sembol doğrulanıyor...")
+        result = await asyncio.to_thread(watchlist.add_item_from_args, chat_id, args[1:])
         await _reply(update, result.message)
         if result.ok:
             snap = await asyncio.to_thread(watchlist.snapshot, chat_id)
@@ -241,12 +239,35 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _reply(update, formatting.watchlist_news_message(matches))
         return
 
-    # Bilinmeyen alt komut: belki dogrudan ticker verilmis
+    if action in ("vs", "karsilastir", "compare"):
+        profile = _profile_of(chat_id)
+        await _reply(update, "⏳ Karşılaştırma hesaplanıyor...")
+        result = await asyncio.to_thread(watchlist.compare_to_bot, chat_id, profile)
+        await _reply(
+            update,
+            formatting.watchlist_compare_message(result, RISK_PROFILE_TR[profile]),
+        )
+        return
+
+    if action in ("uyari", "alert", "uyarı"):
+        if len(args) < 2 or args[1].lower() in ("kapat", "off", "0", "kapali", "kapalı"):
+            result = watchlist.set_alert_threshold(chat_id, None)
+            await _reply(update, result.message)
+            return
+        try:
+            pct = float(args[1].replace(",", ".").replace("%", ""))
+        except ValueError:
+            await _reply(update, "Kullanım: <code>/sepetim uyari 3</code> veya <code>/sepetim uyari kapat</code>")
+            return
+        result = watchlist.set_alert_threshold(chat_id, pct)
+        await _reply(update, result.message)
+        return
+
     if action not in ("liste", "list", "goster", "show"):
         await _reply(
             update,
             "Bilinmeyen alt komut. <code>/sepetim yardim</code> yazın.\n"
-            "Örnek: <code>/sepetim ekle THYAO.IS 20</code>",
+            "Örnek: <code>/sepetim ekle MAC tefas 20</code>",
         )
         return
 
@@ -291,7 +312,7 @@ async def scheduled_cycle(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Degisim olmasa da gunde bir kez kisa durum ozeti."""
+    """Degisim olmasa da gunde bir kez kisa durum ozeti + sepet uyarilari."""
     state = engine.current_state()
     if state["analysis"] is None:
         return
@@ -301,6 +322,7 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for row in storage.subscribers_to_notify():
         profile = row["risk_profile"]
+        chat_id = row["chat_id"]
         view = portfolio.valuation(profile, quotes)
         text = "\n".join(
             [
@@ -324,7 +346,22 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
                 formatting.DISCLAIMER,
             ]
         )
-        await _send(context.application, row["chat_id"], text)
+        await _send(context.application, chat_id, text)
+
+        # Kullanici takip sepeti uyarilari
+        threshold = watchlist.get_alert_threshold(chat_id)
+        if threshold:
+            try:
+                snap = await asyncio.to_thread(watchlist.snapshot, chat_id)
+                hits = watchlist.alert_hits(chat_id, snap)
+                if hits:
+                    await _send(
+                        context.application,
+                        chat_id,
+                        formatting.watchlist_alerts_message(hits, threshold),
+                    )
+            except Exception:  # noqa: BLE001
+                log.exception("Watchlist uyari kontrolu basarisiz: %s", chat_id)
 
 
 async def broadcast_changes(application: Application, result: engine.CycleResult) -> None:
