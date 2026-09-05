@@ -1,4 +1,67 @@
-# YTD Bot — haber okuyan, disiplinli sepet botu
+# YTD Bot - disciplined sample portfolio bot
+
+Telegram uzerinden, orta-uzun vadeli yatirimcilara yonelik (egitim/deneysel) bir
+"temsilci sepet" botudur.
+
+Bot her 4 saatte bir:
+- RSS ile haber toplar ve onem siniflar (kritik / onemli / genel)
+- Piyasa verisini (fiyat + momentum) TL bazinda modeler (yfinance)
+- Regim (bullish/balanced/bearish) uretir
+- "Disiplin kurallari" ile sepetin sadece gerekli durumlarda degismesine karar verir
+- Degisim olursa temsilci portfoyu gunceller ve gerekcesiyle birlikte bildirir
+
+## Ozellikler
+- LLM opsiyonel: `ANTHROPIC_API_KEY` varsa Anthropic ile JSON tabanli analiz
+- LLM yoksa: anahtar kelime tabanli deterministik yedek analiz
+- Sık gorus degisikligini engelleyen disiplin kurallari
+- 3 risk profilinde (Dusuk/Orta/Yuksek) temsilci portfoy
+
+## Kurulum (Windows / PowerShell)
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+`.env` dosyasini doldurun:
+- `TELEGRAM_BOT_TOKEN`: BotFather'dan aldiginiz token
+- `ADMIN_CHAT_IDS`: /calistir komutunu sadece adminlerde acmak icin chat id'leri (virgul ile)
+- `ANTHROPIC_API_KEY`: opsiyonel (bos birakirsaniz LLM kullanilmaz)
+- `ANTHROPIC_MODEL`: varsayilan `claude-sonnet-4-5`
+
+## Botu baslatma
+```powershell
+.\.venv\Scripts\python.exe run_bot.py
+```
+
+## Telegram komutlari
+- `/sepet`: Guncel sepet (agirliklar + gerekceler)
+- `/portfoy`: Temsilci portfoyun kâr/zarar + referans karsilastirmasi
+- `/performans`: 3 risk profilini yan yana karsilastirir
+- `/durum`: Son karar + degisim olasiligi
+- `/analiz`: Analizin detayli gerekceleri
+- `/gecmis`: Sepet degisim gecmisi
+- `/profil`: Risk profilini degistirir
+- `/bildirim`: Bildirim acik/kapali
+- `/calistir`: Analiz dongusunu elle tetikler (admin chat ile sinirlanabilir)
+
+## Telegram'siz tek dongu calistirma
+```powershell
+.\.venv\Scripts\python.exe run_cycle.py
+```
+
+Mesaj formatini metin olarak gormek icin:
+```powershell
+.\.venv\Scripts\python.exe run_cycle.py --messages
+```
+
+## Not (yatirim tavsiyesi degildir)
+Bu proje yatirim tavsiyesi uretmez; egitim ve deneysel amaclarla hazirlanmistir.
+
+## License
+Lutfen projenize uygun bir lisans secin (ornegin MIT/Apache-2.0) ve repo'ya `LICENSE` dosyasi ekleyin.
+
+<!--
 
 Haberleri ve piyasa verisini düzenli olarak okuyup **orta-uzun vadeli** yatırımcılar için
 üç risk profilinde temsilî sepet oluşturan Telegram botu.
@@ -124,3 +187,4 @@ ytdbot/
   olarak modellenir.
 - Kural tabanlı yedek analiz haber içeriğini yorumlamaz, yalnızca anahtar kelime tarar.
 - Bu proje yatırım tavsiyesi üretmez; eğitim ve deneysel amaçlıdır.
+-->
