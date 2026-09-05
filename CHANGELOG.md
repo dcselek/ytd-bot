@@ -2,6 +2,15 @@
 
 Bu proje [Semantic Versioning](https://semver.org/lang/tr/) kullanır.
 
+## [0.3.0] — 2026-09-05
+
+### Eklenen
+- **`/sepetim analiz`** — kullanıcı sepetine özel LLM/kural tabanlı değerlendirme
+- **`/sepetim butce`** — sepet bütçesi (TL); ağırlığa göre tahmini tutar/adet + kaba PnL
+
+### Değişen
+- README: analiz / bütçe komutları
+
 ## [0.2.0] — 2026-09-05
 
 ### Eklenen
@@ -24,5 +33,6 @@ Bu proje [Semantic Versioning](https://semver.org/lang/tr/) kullanır.
 - **`/sepetim`** — kullanıcı takip sepeti (çoklu borsa ticker, TL fiyat, haber filtresi)
 - MIT lisans, README, bot ikonu
 
+[0.3.0]: https://github.com/dcselek/ytd-bot/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dcselek/ytd-bot/releases/tag/v0.2.0
 [0.1.0]: https://github.com/dcselek/ytd-bot/releases/tag/v0.1.0

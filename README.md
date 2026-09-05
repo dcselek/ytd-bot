@@ -14,7 +14,7 @@ Sık görüş değiştirmez. Gerçek para kullanmaz.
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots)
 [![Anthropic](https://img.shields.io/badge/LLM-Anthropic%20optional-191919?logo=anthropic&logoColor=white)](https://www.anthropic.com/)
@@ -228,6 +228,9 @@ Telegram olmadan tek döngü test:
 /sepetim ekle MAC yahoo          → aynı kodun ABD (NYSE/PCX) karşılığı
 /sepetim sil TEFAS:MAC           → çıkar
 /sepetim haber                   → sepetinle ilgili RSS haberleri
+/sepetim analiz                  → sepetine özel değerlendirme (LLM/kural)
+/sepetim butce 100000            → sepet bütçesi (TL); ağırlığa göre tahmini tutar
+/sepetim butce kapat             → bütçeyi temizle
 /sepetim vs                      → bot sepetiyle ~20g karşılaştırma
 /sepetim uyari 3                 → 1g ±%3 hareket uyarısı (günlük özette)
 /sepetim uyari kapat             → uyarıyı kapat
@@ -235,7 +238,11 @@ Telegram olmadan tek döngü test:
 /sepetim yardim                  → yardım
 ```
 
-**TEFAS vs Yahoo/PCX:** Kısa fon kodları (`MAC`, `TTE`…) Yahoo’da ABD hissesiyle
+**`/analiz` vs `/sepetim analiz`:** `/analiz` botun genel piyasa görüşüdür;
+`/sepetim analiz` yalnızca senin takip listen + ilgili haberler üzerinedir.
+
+**Bütçe:** `/sepetim butce 100000` sonrası ağırlıklı sembollerde tahmini TL tutarı
+ve yaklaşık adet gösterilir. Kağıt üstü takip — gerçek işlem yapılmaz.**TEFAS vs Yahoo/PCX:** Kısa fon kodları (`MAC`, `TTE`…) Yahoo’da ABD hissesiyle
 çakışabilir. Bot otomatik önce [TEFAS](https://www.tefas.gov.tr/)’a bakar.
 Zorlamak için `tefas` veya `yahoo` yazın.
 
@@ -314,4 +321,4 @@ Katkılar da aynı lisans altında kabul edilir.
 
 ## Sürüm
 
-Güncel sürüm: **0.2.0** — ayrıntılar [CHANGELOG.md](CHANGELOG.md).
+Güncel sürüm: **0.3.0** — ayrıntılar [CHANGELOG.md](CHANGELOG.md).

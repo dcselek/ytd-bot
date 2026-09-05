@@ -399,11 +399,11 @@ def help_message() -> str:
             "📖 <b>Komutlar</b>",
             "",
             "/sepet — Botun temsilî sepeti ve gerekçeleri",
-            "/sepetim — Senin takip sepetin (ekle / sil / haber)",
+            "/sepetim — Senin takip sepetin (analiz / haber / vs)",
             "/portfoy — Temsilî portföyün kâr/zarar durumu",
             "/performans — Tüm risk profillerinin karşılaştırması",
             "/durum — Piyasa görüşü, istikrar ve son karar",
-            "/analiz — Analizin detaylı gerekçeleri",
+            "/analiz — Botun genel piyasa analizi",
             "/gecmis — Sepet değişim geçmişi",
             "/profil — Risk profilini değiştir",
             "/bildirim — Bildirimleri aç/kapat",
@@ -428,6 +428,9 @@ def watchlist_help_message() -> str:
             "<code>/sepetim ekle MAC yahoo</code> — aynı kodun ABD karşılığı",
             "<code>/sepetim sil TEFAS:MAC</code> — çıkar",
             "<code>/sepetim haber</code> — ilgili haberler",
+            "<code>/sepetim analiz</code> — sepetine özel değerlendirme",
+            "<code>/sepetim butce 100000</code> — sepet bütçesi (TL)",
+            "<code>/sepetim butce kapat</code> — bütçeyi temizle",
             "<code>/sepetim vs</code> — bot sepetiyle 20g karşılaştırma",
             "<code>/sepetim uyari 3</code> — 1g ±%3 hareket uyarısı",
             "<code>/sepetim uyari kapat</code> — uyarıyı kapat",
@@ -453,12 +456,17 @@ def watchlist_message(snap) -> str:
         "<i>Bot önerisi değil — senin tanımladığın liste.</i>",
         "",
     ]
+    if snap.budget_try:
+        parts.append(f"💵 Bütçe: <b>{fmt_try(snap.budget_try, 0)}</b>")
+        parts.append("")
+
     if not snap.items:
         parts += [
             "Sepetin boş.",
             "",
             "Hisse: <code>/sepetim ekle AAPL 25</code>",
             "TEFAS fon: <code>/sepetim ekle MAC tefas 20</code>",
+            "Bütçe: <code>/sepetim butce 100000</code>",
             "Yardım: <code>/sepetim yardim</code>",
             "",
             DISCLAIMER,
@@ -473,6 +481,13 @@ def watchlist_message(snap) -> str:
         else:
             exch = f" · {escape(item.exchange)}" if item.exchange else ""
             display = item.ticker
+
+        budget_bit = ""
+        if item.allocated_try is not None:
+            budget_bit = f" · tahmini {fmt_try(item.allocated_try, 0)}"
+            if item.approx_qty is not None:
+                budget_bit += f" (~{fmt_number(item.approx_qty, 4)} adet)"
+
         if item.quote:
             q = item.quote
             native = ""
@@ -480,15 +495,15 @@ def watchlist_message(snap) -> str:
                 native = f" ({fmt_number(q.price_native, 2)} {escape(q.currency)})"
             parts.append(
                 f"• <b>{escape(display)}</b> — {escape(item.name)}{exch}\n"
-                f"  {weight_bit}{fmt_try(q.price_try)}{native} · "
-                f"1g {pnl_emoji(q.change_1d_pct)} {fmt_pct(q.change_1d_pct, 1)} · "
+                f"  {weight_bit}{fmt_try(q.price_try)}{native}{budget_bit}\n"
+                f"  1g {pnl_emoji(q.change_1d_pct)} {fmt_pct(q.change_1d_pct, 1)} · "
                 f"5g {fmt_pct(q.change_5d_pct, 1)} · "
                 f"20g {fmt_pct(q.change_20d_pct, 1)}"
             )
         else:
             parts.append(
                 f"• <b>{escape(display)}</b> — {escape(item.name)}{exch}\n"
-                f"  {weight_bit}<i>fiyat alınamadı</i>"
+                f"  {weight_bit}<i>fiyat alınamadı</i>{budget_bit}"
             )
 
     parts.append("")
@@ -496,17 +511,32 @@ def watchlist_message(snap) -> str:
         parts.append(f"Ağırlık toplamı: <b>%{fmt_number(snap.weight_sum, 1)}</b>")
         if abs(snap.weight_sum - 100) > 0.5:
             parts.append("<i>Toplam 100 değil; ağırlıklı özet yine de hesaplanır.</i>")
+        if snap.budget_try and snap.allocated_sum_try is not None:
+            unused = snap.budget_try - snap.allocated_sum_try
+            parts.append(
+                f"Dağıtılan: <b>{fmt_try(snap.allocated_sum_try, 0)}</b>"
+                + (f" · kalan {fmt_try(unused, 0)}" if abs(unused) >= 1 else "")
+            )
     if snap.weighted_1d_pct is not None:
-        parts.append(
+        line = (
             f"Sepet özeti (ağırlıklı): 1g {pnl_emoji(snap.weighted_1d_pct)} "
             f"<b>{fmt_pct(snap.weighted_1d_pct, 1)}</b> · "
             f"5g {fmt_pct(snap.weighted_5d_pct or 0, 1)} · "
             f"20g {fmt_pct(snap.weighted_20d_pct or 0, 1)}"
         )
+        parts.append(line)
+    if snap.approx_pnl_1d_try is not None and snap.budget_try:
+        parts.append(
+            f"Bütçeye göre kaba PnL: 1g {pnl_emoji(snap.approx_pnl_1d_try)} "
+            f"<b>{fmt_try(snap.approx_pnl_1d_try)}</b> · "
+            f"20g {pnl_emoji(snap.approx_pnl_20d_try or 0)} "
+            f"<b>{fmt_try(snap.approx_pnl_20d_try or 0)}</b>"
+        )
+        parts.append("<i>PnL, bütçe × ağırlıklı getiridir; gerçek işlem simülasyonu değildir.</i>")
 
     parts += [
         "",
-        "Haber: /sepetim haber · Karşılaştır: /sepetim vs · Yardım: /sepetim yardim",
+        "Haber: /sepetim haber · Analiz: /sepetim analiz · Bütçe: /sepetim butce",
         "",
         DISCLAIMER,
     ]
@@ -590,6 +620,47 @@ def watchlist_alerts_message(hits: list, threshold: float) -> str:
             f"{pnl_emoji(q.change_1d_pct)} <b>{fmt_pct(q.change_1d_pct, 1)}</b>"
         )
     parts += ["", DISCLAIMER]
+    return "\n".join(parts)
+
+
+def watchlist_analysis_message(analysis) -> str:
+    tone_tr = {
+        "positive": ("📈", "Olumlu eğilim"),
+        "mixed": ("⚖️", "Karışık / temkinli"),
+        "negative": ("📉", "Temkinli / olumsuz"),
+    }
+    emoji, label = tone_tr.get(analysis.tone, ("⚖️", analysis.tone))
+    source = "LLM" if analysis.source == "llm" else "kural tabanlı yedek"
+    parts = [
+        "🧺📰 <b>Senin sepetinin analizi</b>",
+        "<i>Botun genel piyasa analizinden bağımsız — sadece senin listen.</i>",
+        "",
+        f"{emoji} <b>{label}</b> · güven {analysis.confidence}/10 · kaynak: {source}",
+        f"{analysis.item_count} sembol · {analysis.news_count} eşleşen haber",
+    ]
+    if analysis.weighted_20d_pct is not None:
+        parts.append(
+            f"Ağırlıklı getiri: 1g {fmt_pct(analysis.weighted_1d_pct or 0, 1)} · "
+            f"5g {fmt_pct(analysis.weighted_5d_pct or 0, 1)} · "
+            f"20g <b>{fmt_pct(analysis.weighted_20d_pct, 1)}</b>"
+        )
+    if analysis.summary_tr:
+        parts += ["", escape(analysis.summary_tr)]
+    if analysis.drivers:
+        parts += ["", "📌 <b>Gözlemler</b>"]
+        parts += [f"• {escape(d)}" for d in analysis.drivers]
+    if analysis.highlights:
+        parts += ["", "🔎 <b>Öne çıkanlar</b>"]
+        parts += [f"• {escape(h)}" for h in analysis.highlights]
+    if analysis.risks:
+        parts += ["", "⚠️ <b>Riskler</b>"]
+        parts += [f"• {escape(r)}" for r in analysis.risks]
+    parts += [
+        "",
+        "Genel piyasa analizi: /analiz · Sepet: /sepetim",
+        "",
+        DISCLAIMER,
+    ]
     return "\n".join(parts)
 
 

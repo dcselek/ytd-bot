@@ -55,6 +55,28 @@ async def _reply(update: Update, text: str, **kwargs) -> None:
     )
 
 
+def _parse_try_amount(raw: str) -> float | None:
+    """100000 / 100.000 / 100,5 / 100.000,50 gibi TL tutarlarini parse eder."""
+    text = (raw or "").upper().replace("TL", "").replace(" ", "").strip()
+    if not text:
+        return None
+    try:
+        if "," in text and "." in text:
+            text = text.replace(".", "").replace(",", ".")
+        elif "," in text:
+            text = text.replace(",", ".")
+        elif text.count(".") > 1:
+            text = text.replace(".", "")
+        elif "." in text:
+            left, right = text.split(".", 1)
+            if left.isdigit() and len(right) == 3:
+                text = left + right
+        value = float(text)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 # --- Komutlar --------------------------------------------------------------
 
 
@@ -239,6 +261,18 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _reply(update, formatting.watchlist_news_message(matches))
         return
 
+    if action in ("analiz", "analysis", "analizet"):
+        await _reply(update, "⏳ Sepetin analiz ediliyor (haber + fiyat)...")
+        result = await asyncio.to_thread(watchlist.analyze_watchlist, chat_id)
+        if result is None:
+            await _reply(
+                update,
+                "Sepetin boş. Önce sembol ekle: <code>/sepetim ekle MAC tefas 20</code>",
+            )
+            return
+        await _reply(update, formatting.watchlist_analysis_message(result))
+        return
+
     if action in ("vs", "karsilastir", "compare"):
         profile = _profile_of(chat_id)
         await _reply(update, "⏳ Karşılaştırma hesaplanıyor...")
@@ -261,6 +295,25 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
         result = watchlist.set_alert_threshold(chat_id, pct)
         await _reply(update, result.message)
+        return
+
+    if action in ("butce", "bütçe", "budget", "sermaye"):
+        if len(args) < 2 or args[1].lower() in ("kapat", "off", "0", "sil", "temizle"):
+            result = watchlist.set_budget(chat_id, None)
+            await _reply(update, result.message)
+            return
+        amount = _parse_try_amount(args[1])
+        if amount is None:
+            await _reply(
+                update,
+                "Kullanım: <code>/sepetim butce 100000</code> veya <code>/sepetim butce 100.000</code>",
+            )
+            return
+        result = watchlist.set_budget(chat_id, amount)
+        await _reply(update, result.message)
+        if result.ok and amount > 0:
+            snap = await asyncio.to_thread(watchlist.snapshot, chat_id)
+            await _reply(update, formatting.watchlist_message(snap))
         return
 
     if action not in ("liste", "list", "goster", "show"):
