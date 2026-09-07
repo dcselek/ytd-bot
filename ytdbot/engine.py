@@ -15,7 +15,7 @@ from typing import Any
 from . import analysis as analysis_mod
 from . import baskets, discipline, market, news, portfolio, storage
 from .analysis import Analysis
-from .baskets import RISK_PROFILES
+from .baskets import INCOME_PREFS, RISK_PROFILES, portfolio_key
 from .config import settings
 from .portfolio import Order
 
@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class ProfileOutcome:
-    risk_profile: str
+    risk_profile: str  # storage key (mid veya mid_passive)
     changed: bool
     old_weights: dict[str, float]
     new_weights: dict[str, float]
@@ -46,8 +46,8 @@ class CycleResult:
         return any(outcome.changed for outcome in self.outcomes.values())
 
 
-def _active_weights(risk_profile: str) -> tuple[int | None, dict[str, float], str | None]:
-    row = storage.active_basket(risk_profile)
+def _active_weights(storage_key: str) -> tuple[int | None, dict[str, float], str | None]:
+    row = storage.active_basket(storage_key)
     if row is None:
         return None, {}, None
     return int(row["id"]), json.loads(row["weights_json"]), row["regime"]
@@ -93,42 +93,47 @@ def run_cycle() -> CycleResult:
     )
 
     if decision.changes_basket:
-        # Sepetler kararin hedef rejimine gore kurulur; analizin anlik gorusune degil.
         target_analysis = dataclasses.replace(result, regime=decision.target_regime)
         for profile in RISK_PROFILES:
-            cycle_result.outcomes[profile] = _apply_profile(
-                profile, target_analysis, decision, quotes, cycle_id
-            )
+            for pref in INCOME_PREFS:
+                key = portfolio_key(profile, pref)
+                cycle_result.outcomes[key] = _apply_profile(
+                    key, profile, pref, target_analysis, decision, quotes, cycle_id
+                )
     else:
         for profile in RISK_PROFILES:
-            _, weights, _ = _active_weights(profile)
-            cycle_result.outcomes[profile] = ProfileOutcome(
-                risk_profile=profile,
-                changed=False,
-                old_weights=weights,
-                new_weights=weights,
-                skip_reason="Karar: beklemede",
-            )
+            for pref in INCOME_PREFS:
+                key = portfolio_key(profile, pref)
+                _, weights, _ = _active_weights(key)
+                cycle_result.outcomes[key] = ProfileOutcome(
+                    risk_profile=key,
+                    changed=False,
+                    old_weights=weights,
+                    new_weights=weights,
+                    skip_reason="Karar: beklemede",
+                )
 
     discipline.commit(decision)
 
     for profile in RISK_PROFILES:
-        portfolio.take_snapshot(profile, quotes, cycle_id)
+        for pref in INCOME_PREFS:
+            portfolio.take_snapshot(portfolio_key(profile, pref), quotes, cycle_id)
 
     return cycle_result
 
 
 def _apply_profile(
+    storage_key: str,
     risk_profile: str,
+    income_pref: str,
     target_analysis: Analysis,
     decision: discipline.Decision,
     quotes: dict[str, market.Quote],
     cycle_id: int,
 ) -> ProfileOutcome:
-    old_basket_id, old_weights, old_regime = _active_weights(risk_profile)
-    target = baskets.build(risk_profile, target_analysis, quotes)
+    old_basket_id, old_weights, old_regime = _active_weights(storage_key)
+    target = baskets.build(risk_profile, target_analysis, quotes, income_pref)
 
-    # Kademeli gecis: hedefe tek hamlede degil, adim adim yaklasiyoruz.
     if decision.transition_ratio < 1.0 and old_weights:
         applied = baskets.blend(old_weights, target.weights, decision.transition_ratio)
     else:
@@ -136,10 +141,9 @@ def _apply_profile(
 
     drift = baskets.weight_distance(old_weights, applied) if old_weights else 100.0
 
-    # Ayni rejim icindeki periyodik kontrolde kucuk sapmalar icin islem yapmiyoruz.
     if decision.action == discipline.REBALANCE and drift < settings.min_weight_drift_pct:
         return ProfileOutcome(
-            risk_profile=risk_profile,
+            risk_profile=storage_key,
             changed=False,
             old_weights=old_weights,
             new_weights=old_weights,
@@ -150,16 +154,16 @@ def _apply_profile(
         )
 
     new_basket_id = storage.insert_basket(
-        risk_profile=risk_profile,
+        risk_profile=storage_key,
         regime=decision.target_regime,
         weights=applied,
         rationale=target.rationale,
         cycle_id=cycle_id,
     )
-    orders = portfolio.rebalance(risk_profile, applied, quotes, cycle_id)
+    orders = portfolio.rebalance(storage_key, applied, quotes, cycle_id)
 
     storage.insert_basket_change(
-        risk_profile=risk_profile,
+        risk_profile=storage_key,
         old_basket_id=old_basket_id,
         new_basket_id=new_basket_id,
         old_regime=old_regime,
@@ -174,12 +178,13 @@ def _apply_profile(
             "confidence": target_analysis.confidence,
             "drift_pct": round(drift, 2),
             "transition_ratio": decision.transition_ratio,
+            "income_pref": income_pref,
         },
         held_days=decision.days_held if decision.days_held < 1e5 else 0.0,
     )
 
     return ProfileOutcome(
-        risk_profile=risk_profile,
+        risk_profile=storage_key,
         changed=True,
         old_weights=old_weights,
         new_weights=applied,

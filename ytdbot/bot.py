@@ -19,12 +19,24 @@ from telegram.ext import (
 )
 
 from . import discipline, engine, formatting, market, portfolio, storage, watchlist
-from .baskets import RISK_PROFILES, RISK_PROFILE_EMOJI, RISK_PROFILE_TR
+from .baskets import (
+    INCOME_GROWTH,
+    INCOME_PASSIVE,
+    INCOME_PREF_DESC,
+    INCOME_PREF_EMOJI,
+    INCOME_PREF_TR,
+    INCOME_PREFS,
+    RISK_PROFILES,
+    RISK_PROFILE_EMOJI,
+    RISK_PROFILE_TR,
+    portfolio_key,
+)
 from .config import settings
 
 log = logging.getLogger(__name__)
 
 PROFILE_CALLBACK_PREFIX = "profile:"
+INCOME_CALLBACK_PREFIX = "income:"
 
 
 def _profile_keyboard() -> InlineKeyboardMarkup:
@@ -41,9 +53,38 @@ def _profile_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def _income_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    f"{INCOME_PREF_EMOJI[pref]} {INCOME_PREF_TR[pref]}",
+                    callback_data=f"{INCOME_CALLBACK_PREFIX}{pref}",
+                )
+            ]
+            for pref in INCOME_PREFS
+        ]
+    )
+
+
 def _profile_of(chat_id: int) -> str:
     row = storage.get_subscriber(chat_id)
     return row["risk_profile"] if row else "mid"
+
+
+def _income_of(chat_id: int) -> str:
+    row = storage.get_subscriber(chat_id)
+    if row is None:
+        return INCOME_GROWTH
+    try:
+        pref = row["income_pref"] or INCOME_GROWTH
+    except (KeyError, IndexError):
+        pref = INCOME_GROWTH
+    return pref if pref in INCOME_PREFS else INCOME_GROWTH
+
+
+def _storage_key(chat_id: int) -> str:
+    return portfolio_key(_profile_of(chat_id), _income_of(chat_id))
 
 
 async def _reply(update: Update, text: str, **kwargs) -> None:
@@ -103,45 +144,132 @@ async def on_profile_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     chat_id = update.effective_chat.id
-    storage.upsert_subscriber(chat_id, profile)
+    storage.upsert_subscriber(chat_id, risk_profile=profile)
     await query.edit_message_text(
         f"✅ Risk profilin <b>{RISK_PROFILE_TR[profile]}</b> olarak ayarlandı.\n\n"
-        "Sepeti görmek için /sepet, temsilî portföy için /portfoy yazabilirsin.",
+        "Şimdi pasif gelir isteyip istemediğini seç (/tercih):\n"
+        "Sepet için /sepet · bakiye için /bakiye",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_income_keyboard(),
+    )
+
+
+async def cmd_income(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    current = _income_of(update.effective_chat.id)
+    await _reply(
+        update,
+        f"Şu anki tercih: <b>{INCOME_PREF_TR[current]}</b>\n"
+        f"<i>{INCOME_PREF_DESC[current]}</i>\n\n"
+        "Bot sepeti hisse / endeks / <b>yerli veya yabancı fon-ETF</b> karışık önerebilir. "
+        "Pasif gelir istersen temettü ve borçlanma ağırlık kazanır:",
+        reply_markup=_income_keyboard(),
+    )
+
+
+async def on_income_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    pref = query.data.removeprefix(INCOME_CALLBACK_PREFIX)
+    if pref not in INCOME_PREFS:
+        return
+    chat_id = update.effective_chat.id
+    storage.upsert_subscriber(chat_id, income_pref=pref)
+    await query.edit_message_text(
+        f"✅ Tercihin <b>{INCOME_PREF_TR[pref]}</b> olarak ayarlandı.\n\n"
+        f"<i>{INCOME_PREF_DESC[pref]}</i>\n\n"
+        "Sepeti görmek için /sepet · bakiyeni yazmak için /bakiye",
         parse_mode=ParseMode.HTML,
     )
 
 
+async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Bot yonetimindeki sepet icin kullanici bakiyesi."""
+    chat_id = update.effective_chat.id
+    storage.upsert_subscriber(chat_id)
+    args = [a.strip() for a in (context.args or []) if a.strip()]
+    if not args or args[0].lower() in ("kapat", "sil", "0", "temizle"):
+        if args:
+            storage.set_bot_capital(chat_id, None)
+            await _reply(update, "💵 Bot sepeti bakiyen temizlendi.")
+            return
+        current = storage.get_bot_capital(chat_id)
+        if current:
+            await _reply(
+                update,
+                f"💵 Kayıtlı bakiyen: <b>{formatting.fmt_try(current, 0)}</b>\n\n"
+                "Değiştir: <code>/bakiye 250000</code>\n"
+                "Temizle: <code>/bakiye kapat</code>",
+            )
+        else:
+            await _reply(
+                update,
+                "Botun yönettiği sepet için bakiyeni yazabilirsin.\n"
+                "Örnek: <code>/bakiye 250000</code>\n\n"
+                "<i>Kağıt üstü ölçekleme — gerçek işlem yapılmaz. "
+                "Sepette ağırlıklara göre tahmini tutar görünür.</i>",
+            )
+        return
+
+    amount = _parse_try_amount(args[0])
+    if amount is None:
+        await _reply(update, "Kullanım: <code>/bakiye 250000</code> veya <code>/bakiye 250.000</code>")
+        return
+    storage.set_bot_capital(chat_id, amount)
+    await _reply(
+        update,
+        f"💵 Bakiyen <b>{formatting.fmt_try(amount, 0)}</b> olarak kaydedildi.\n"
+        "Şimdi /sepet yaz; ağırlıklara göre tahmini tutarlar görünür.",
+    )
+
+
 async def cmd_basket(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = _profile_of(update.effective_chat.id)
+    chat_id = update.effective_chat.id
+    key = _storage_key(chat_id)
+    income = _income_of(chat_id)
+    capital = storage.get_bot_capital(chat_id)
     state = engine.current_state()
     if state["analysis"] is None:
         await _reply(update, "Bot henüz ilk analizini yapmadı. Birkaç dakika içinde hazır olacak.")
         return
 
-    row = storage.active_basket(profile)
+    row = storage.active_basket(key)
     if row is None:
-        await _reply(update, "Bu profil için henüz sepet oluşturulmadı.")
+        # Eski growth sepetine geri dus
+        row = storage.active_basket(_profile_of(chat_id))
+    if row is None:
+        await _reply(
+            update,
+            "Bu profil/tercih için henüz sepet oluşturulmadı. "
+            "/calistir ile döngüyü tetikleyebilirsin (admin).",
+        )
         return
 
     weights = json.loads(row["weights_json"])
     await _reply(
         update,
         formatting.basket_message(
-            profile, weights, state["analysis"], market.cached_quotes(), state["stability"]
+            key,
+            weights,
+            state["analysis"],
+            market.cached_quotes(),
+            state["stability"],
+            income_pref=income,
+            capital=capital,
         ),
     )
 
 
 async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = _profile_of(update.effective_chat.id)
+    key = _storage_key(update.effective_chat.id)
     quotes = market.cached_quotes()
-    view = portfolio.valuation(profile, quotes)
+    view = portfolio.valuation(key, quotes)
     await _reply(update, formatting.portfolio_message(view, portfolio.benchmarks(quotes)))
 
 
 async def cmd_performance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     quotes = market.cached_quotes()
-    views = [portfolio.valuation(profile, quotes) for profile in RISK_PROFILES]
+    keys = [portfolio_key(p, pref) for p in RISK_PROFILES for pref in (INCOME_GROWTH, INCOME_PASSIVE)]
+    views = [portfolio.valuation(key, quotes) for key in keys]
     await _reply(update, formatting.performance_overview(views, portfolio.benchmarks(quotes)))
 
 
@@ -173,9 +301,9 @@ async def cmd_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = _profile_of(update.effective_chat.id)
-    rows = storage.basket_history(profile, limit=8)
-    await _reply(update, formatting.history_message(profile, rows))
+    key = _storage_key(update.effective_chat.id)
+    rows = storage.basket_history(key, limit=8)
+    await _reply(update, formatting.history_message(key, rows))
 
 
 async def cmd_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -274,13 +402,13 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if action in ("vs", "karsilastir", "compare"):
+        key = _storage_key(chat_id)
         profile = _profile_of(chat_id)
+        income = _income_of(chat_id)
         await _reply(update, "⏳ Karşılaştırma hesaplanıyor...")
-        result = await asyncio.to_thread(watchlist.compare_to_bot, chat_id, profile)
-        await _reply(
-            update,
-            formatting.watchlist_compare_message(result, RISK_PROFILE_TR[profile]),
-        )
+        result = await asyncio.to_thread(watchlist.compare_to_bot, chat_id, key)
+        label = f"{RISK_PROFILE_TR[profile]} · {INCOME_PREF_TR[income]}"
+        await _reply(update, formatting.watchlist_compare_message(result, label))
         return
 
     if action in ("uyari", "alert", "uyarı"):
@@ -375,8 +503,13 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for row in storage.subscribers_to_notify():
         profile = row["risk_profile"]
+        try:
+            pref = row["income_pref"] or INCOME_GROWTH
+        except (KeyError, IndexError):
+            pref = INCOME_GROWTH
+        key = portfolio_key(profile, pref if pref in INCOME_PREFS else INCOME_GROWTH)
         chat_id = row["chat_id"]
-        view = portfolio.valuation(profile, quotes)
+        view = portfolio.valuation(key, quotes)
         text = "\n".join(
             [
                 "☀️ <b>Günlük özet</b>",
@@ -385,8 +518,9 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"Sepet {formatting.fmt_number(state['stability'].get('days_held') or 0, 1)} "
                 "gündür değişmedi.",
                 "",
-                f"{RISK_PROFILE_EMOJI[profile]} <b>{RISK_PROFILE_TR[profile]}</b> temsilî portföy: "
-                f"{formatting.fmt_try(view.total_value)} · "
+                f"{RISK_PROFILE_EMOJI[profile]} <b>{RISK_PROFILE_TR[profile]}</b> · "
+                f"{INCOME_PREF_TR.get(pref, pref)}",
+                f"Temsilî: {formatting.fmt_try(view.total_value)} · "
                 f"{formatting.pnl_emoji(view.pnl_abs)} <b>{formatting.fmt_pct(view.pnl_pct)}</b>",
                 (
                     f"<i>BIST 100 aynı dönemde {formatting.fmt_pct(bench['XU100'])}</i>"
@@ -401,7 +535,6 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         await _send(context.application, chat_id, text)
 
-        # Kullanici takip sepeti uyarilari
         threshold = watchlist.get_alert_threshold(chat_id)
         if threshold:
             try:
@@ -421,7 +554,12 @@ async def broadcast_changes(application: Application, result: engine.CycleResult
     state_stability = discipline.stability_summary()
     for row in storage.subscribers_to_notify():
         profile = row["risk_profile"]
-        outcome = result.outcomes.get(profile)
+        try:
+            pref = row["income_pref"] or INCOME_GROWTH
+        except (KeyError, IndexError):
+            pref = INCOME_GROWTH
+        key = portfolio_key(profile, pref if pref in INCOME_PREFS else INCOME_GROWTH)
+        outcome = result.outcomes.get(key)
         if outcome is None or not outcome.changed:
             continue
         text = formatting.change_alert(
@@ -456,7 +594,9 @@ async def _send(application: Application, chat_id: int, text: str) -> None:
 async def _post_init(application: Application) -> None:
     await application.bot.set_my_commands(
         [
-            ("sepet", "Botun temsilî sepeti"),
+            ("sepet", "Bot sepeti"),
+            ("tercih", "Pasif gelir / büyüme"),
+            ("bakiye", "Bot sepeti bakiyen"),
             ("sepetim", "Senin takip sepetin"),
             ("portfoy", "Temsilî portföy kâr/zarar"),
             ("performans", "Profillerin karşılaştırması"),
@@ -488,6 +628,8 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler(["yardim", "help"], cmd_help))
     application.add_handler(CommandHandler(["profil", "profile"], cmd_profile))
+    application.add_handler(CommandHandler(["tercih", "income", "gelir"], cmd_income))
+    application.add_handler(CommandHandler(["bakiye", "capital", "sermaye"], cmd_balance))
     application.add_handler(CommandHandler(["sepet", "basket"], cmd_basket))
     application.add_handler(CommandHandler(["sepetim", "watchlist", "mybasket"], cmd_watchlist))
     application.add_handler(CommandHandler(["portfoy", "portfolio"], cmd_portfolio))
@@ -500,6 +642,9 @@ def build_application() -> Application:
     application.add_handler(CommandHandler(["calistir", "runnow"], cmd_run_now))
     application.add_handler(
         CallbackQueryHandler(on_profile_selected, pattern=f"^{PROFILE_CALLBACK_PREFIX}")
+    )
+    application.add_handler(
+        CallbackQueryHandler(on_income_selected, pattern=f"^{INCOME_CALLBACK_PREFIX}")
     )
 
     job_queue = application.job_queue

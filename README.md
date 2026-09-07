@@ -14,7 +14,7 @@ Sık görüş değiştirmez. Gerçek para kullanmaz.
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-green.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots)
 [![Anthropic](https://img.shields.io/badge/LLM-Anthropic%20optional-191919?logo=anthropic&logoColor=white)](https://www.anthropic.com/)
@@ -56,8 +56,11 @@ Sık görüş değiştirmez. Gerçek para kullanmaz.
   yoksa anahtar kelime tabanlı yedek ile çalışmaya devam eder.
 - **3 risk profili.** Düşük / orta / yüksek — her biri 100.000 TL temsilî
   sermaye ile başlar; komisyon dahil simüle edilir.
+- **Karışık sepet.** Hisse, endeks, altın; uygunsa yerli (TEFAS) veya yabancı fon/ETF.
+- **Pasif gelir tercihi (`/tercih`).** Temettü/borçlanma ağırlıklı veya büyüme odaklı.
+- **Senin bakiyen (`/bakiye`).** Bot sepetindeki tutarlar bakiyene göre ölçeklenir.
 - **Senin sepetin (`/sepetim`).** Kendi ticker listeni ekle (BIST, ABD, Avrupa,
-  Japonya, **TEFAS fonları**); TL fiyat + ilgili haber + botla karşılaştırma.
+  Japonya, TEFAS); TL fiyat + ilgili haber + botla karşılaştırma.
 - **Şeffaf gerekçe.** Her değişim nedeniyle kaydedilir; `/gecmis` ile izlenir.
 - **Telegram-native.** Sepet, portföy, performans ve bildirimler sohbet içinde.
 
@@ -207,10 +210,12 @@ Telegram olmadan tek döngü test:
 | Komut | Ne yapar |
 |---|---|
 | `/start` | Karşılama + risk profili seçimi |
-| `/sepet` | Botun temsilî sepeti, ağırlıklar, gerekçeler |
+| `/sepet` | Botun temsilî sepeti (hisse / fon-ETF + tutar) |
+| `/tercih` | Pasif gelir / büyüme tercihi |
+| `/bakiye` | Bot sepeti için senin bakiyen (TL) |
 | `/sepetim` | Senin takip sepetin (TEFAS / Yahoo, haber, vs, uyarı) |
-| `/portfoy` | Temsilî kâr/zarar + BIST100 / likit / altın / dolar referansları |
-| `/performans` | Üç risk profilinin yan yana karşılaştırması |
+| `/portfoy` | Temsilî kâr/zarar + referanslar |
+| `/performans` | Profillerin yan yana karşılaştırması |
 | `/durum` | Piyasa görüşü, son karar, değişim olasılığı |
 | `/analiz` | Gerekçeler, riskler, sektör görüşleri |
 | `/gecmis` | Sepet değişim geçmişi ve nedenleri |
@@ -282,6 +287,7 @@ ytd-bot/
     ├── analysis.py         # LLM analizi + kural tabanlı yedek
     ├── baskets.py          # Risk profili × görüş → ağırlıklar
     ├── discipline.py       # "Değişebilir mi?" karar motoru
+    ├── funds.py            # Opsiyonel TEFAS + yabancı fon/ETF katalogu
     ├── watchlist.py        # Kullanıcı takip sepeti (/sepetim)
     ├── tefas.py            # TEFAS fon fiyatları (tefasmak)
     ├── portfolio.py        # Temsilî alım/satım, PnL, referanslar
@@ -321,4 +327,4 @@ Katkılar da aynı lisans altında kabul edilir.
 
 ## Sürüm
 
-Güncel sürüm: **0.3.0** — ayrıntılar [CHANGELOG.md](CHANGELOG.md).
+Güncel sürüm: **0.4.0** — ayrıntılar [CHANGELOG.md](CHANGELOG.md).

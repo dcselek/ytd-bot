@@ -10,8 +10,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from . import market, storage, universe
-from .baskets import RISK_PROFILES
+from . import funds, market, storage, universe
+from .baskets import INCOME_PREFS, RISK_PROFILES, portfolio_key
 from .config import settings
 
 log = logging.getLogger(__name__)
@@ -71,7 +71,21 @@ class Order:
 
 def ensure_portfolios() -> None:
     for profile in RISK_PROFILES:
-        storage.create_portfolio(profile, settings.start_capital_try)
+        for pref in INCOME_PREFS:
+            storage.create_portfolio(portfolio_key(profile, pref), settings.start_capital_try)
+
+
+def _position_meta(key: str) -> tuple[str, str]:
+    """name, asset_class_tr"""
+    if key == "CASH":
+        return "Nakit (TL)", "Nakit"
+    if key in universe.BY_KEY:
+        inst = universe.get(key)
+        return inst.name, inst.asset_class_tr
+    fund = funds.get(key)
+    if fund:
+        return funds.display_name(key), fund.role_tr
+    return funds.display_name(key), "Fon / ETF"
 
 
 def _fee(amount: float) -> float:
@@ -214,14 +228,14 @@ def valuation(risk_profile: str, quotes: dict[str, market.Quote]) -> PortfolioVi
         quote = quotes.get(key)
         if quote is None or pos["quantity"] <= 1e-12:
             continue
-        inst = universe.get(key)
+        inst_name, asset_class_tr = _position_meta(key)
         value = pos["quantity"] * quote.price_try
         cost = pos["quantity"] * pos["avg_cost"]
         views.append(
             PositionView(
                 key=key,
-                name=inst.name,
-                asset_class_tr=inst.asset_class_tr,
+                name=inst_name,
+                asset_class_tr=asset_class_tr,
                 quantity=pos["quantity"],
                 price=quote.price_try,
                 value=value,

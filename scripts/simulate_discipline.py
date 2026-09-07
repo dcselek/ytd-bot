@@ -32,9 +32,9 @@ for suffix in ("", "-wal", "-shm"):
         stale.unlink()
 
 from ytdbot import analysis as analysis_mod  # noqa: E402
-from ytdbot import baskets, discipline, engine, market, news, portfolio, storage  # noqa: E402
+from ytdbot import baskets, discipline, engine, funds, market, news, portfolio, storage  # noqa: E402
 from ytdbot.analysis import BALANCED, BEARISH, BULLISH, Analysis  # noqa: E402
-from ytdbot.baskets import RISK_PROFILES  # noqa: E402
+from ytdbot.baskets import INCOME_PREFS, RISK_PROFILES, portfolio_key  # noqa: E402
 from ytdbot.universe import INSTRUMENTS  # noqa: E402
 
 START = datetime(2026, 1, 6, 9, 0, tzinfo=timezone.utc)
@@ -90,13 +90,27 @@ def fake_quotes(regime: str = BALANCED, drift_pct: float = 0.0) -> dict[str, mar
     for inst in INSTRUMENTS:
         if inst.is_synthetic:
             continue
-        base = BASE_PRICES[inst.key]
+        base = BASE_PRICES.get(inst.key, 100.0)
         quotes[inst.key] = market.Quote(
             instrument_key=inst.key,
             price_try=base * (1 + drift_pct / 100.0),
             change_1d_pct=momentum / 20.0,
             change_5d_pct=momentum / 4.0,
             change_20d_pct=momentum + (hash(inst.key) % 7 - 3),
+            as_of=fake_now(),
+        )
+    # Bot sepeti TEFAS fonlari kullanir; simulasonda sahte fiyatlar.
+    for fund in funds.FUNDS:
+        base = 1.0 + (hash(fund.code) % 50) / 100.0
+        # Yabanci ETF'ler USD bazinda daha yuksek fiyat gibi
+        if fund.venue == funds.VENUE_YAHOO:
+            base = 50.0 + (hash(fund.code) % 40)
+        quotes[fund.key] = market.Quote(
+            instrument_key=fund.key,
+            price_try=base * (1 + drift_pct / 100.0),
+            change_1d_pct=momentum / 20.0,
+            change_5d_pct=momentum / 4.0,
+            change_20d_pct=momentum + (hash(fund.code) % 7 - 3),
             as_of=fake_now(),
         )
     return quotes
@@ -261,12 +275,15 @@ def main() -> None:
     print("=" * 92)
     quotes = fake_quotes(BEARISH, drift_pct=6.0)
     for profile in RISK_PROFILES:
-        view = portfolio.valuation(profile, quotes)
-        print(
-            f"  {baskets.RISK_PROFILE_TR[profile]:<12} "
-            f"{view.total_value:>14,.2f} TL  ({view.pnl_pct:+.2f}%)  "
-            f"{int(view.trade_count)} işlem, komisyon {view.total_fees:,.2f} TL"
-        )
+        for pref in INCOME_PREFS:
+            key = portfolio_key(profile, pref)
+            view = portfolio.valuation(key, quotes)
+            label = f"{baskets.RISK_PROFILE_TR[profile]} · {baskets.INCOME_PREF_TR[pref]}"
+            print(
+                f"  {label:<42} "
+                f"{view.total_value:>14,.2f} TL  ({view.pnl_pct:+.2f}%)  "
+                f"{int(view.trade_count)} işlem, komisyon {view.total_fees:,.2f} TL"
+            )
 
 
 if __name__ == "__main__":

@@ -11,7 +11,13 @@ import json
 import re
 
 from ytdbot import discipline, engine, formatting, logging_setup, market, portfolio, storage
-from ytdbot.baskets import RISK_PROFILES, RISK_PROFILE_TR
+from ytdbot.baskets import (
+    INCOME_PREF_TR,
+    INCOME_PREFS,
+    RISK_PROFILES,
+    RISK_PROFILE_TR,
+    portfolio_key,
+)
 
 
 def strip_html(text: str) -> str:
@@ -47,33 +53,35 @@ def main() -> None:
     bench = portfolio.benchmarks(quotes)
 
     for profile in RISK_PROFILES:
-        outcome = result.outcomes.get(profile)
-        view = portfolio.valuation(profile, quotes)
-        print("\n" + "-" * 78)
-        print(f"{RISK_PROFILE_TR[profile]}")
-        print("-" * 78)
-        if outcome and outcome.changed:
-            print(f"Sepet güncellendi ({len(outcome.orders)} emir):")
-            for order in outcome.orders:
-                print(
-                    f"  {order.side:4s} {order.key:12s} "
-                    f"{order.quantity:>14,.4f} adet @ {order.price:>12,.2f} TL "
-                    f"= {order.amount:>12,.2f} TL"
-                )
-        elif outcome and outcome.skip_reason:
-            print(f"Değişiklik yok — {outcome.skip_reason}")
+        for pref in INCOME_PREFS:
+            key = portfolio_key(profile, pref)
+            outcome = result.outcomes.get(key)
+            view = portfolio.valuation(key, quotes)
+            print("\n" + "-" * 78)
+            print(f"{RISK_PROFILE_TR[profile]} · {INCOME_PREF_TR[pref]}")
+            print("-" * 78)
+            if outcome and outcome.changed:
+                print(f"Sepet güncellendi ({len(outcome.orders)} emir):")
+                for order in outcome.orders:
+                    print(
+                        f"  {order.side:4s} {order.key:16s} "
+                        f"{order.quantity:>14,.4f} adet @ {order.price:>12,.2f} TL "
+                        f"= {order.amount:>12,.2f} TL"
+                    )
+            elif outcome and outcome.skip_reason:
+                print(f"Değişiklik yok — {outcome.skip_reason}")
 
-        print(f"Toplam değer : {view.total_value:>14,.2f} TL")
-        print(f"Nakit        : {view.cash:>14,.2f} TL")
-        print(f"Kâr/Zarar    : {view.pnl_abs:>14,.2f} TL  ({view.pnl_pct:+.2f}%)")
-        print(f"Komisyon     : {view.total_fees:>14,.2f} TL  ({int(view.trade_count)} işlem)")
-        if view.positions:
-            print("Pozisyonlar:")
-            for pos in view.positions:
-                print(
-                    f"  {pos.name:26s} %{pos.weight_pct:5.1f}  "
-                    f"{pos.value:>12,.2f} TL  ({pos.pnl_pct:+.2f}%)"
-                )
+            print(f"Toplam değer : {view.total_value:>14,.2f} TL")
+            print(f"Nakit        : {view.cash:>14,.2f} TL")
+            print(f"Kâr/Zarar    : {view.pnl_abs:>14,.2f} TL  ({view.pnl_pct:+.2f}%)")
+            print(f"Komisyon     : {view.total_fees:>14,.2f} TL  ({int(view.trade_count)} işlem)")
+            if view.positions:
+                print("Pozisyonlar:")
+                for pos in view.positions:
+                    print(
+                        f"  {pos.name[:40]:40s} %{pos.weight_pct:5.1f}  "
+                        f"{pos.value:>12,.2f} TL  ({pos.pnl_pct:+.2f}%)"
+                    )
 
     if bench:
         print("\n" + "-" * 78)
@@ -86,26 +94,35 @@ def main() -> None:
         state = engine.current_state()
         stability = discipline.stability_summary()
         for profile in RISK_PROFILES:
-            row = storage.active_basket(profile)
-            if row is None:
-                continue
-            weights = json.loads(row["weights_json"])
-            print("\n" + "=" * 78)
-            print(f"TELEGRAM MESAJI — {RISK_PROFILE_TR[profile]}")
-            print("=" * 78)
-            print(
-                strip_html(
-                    formatting.basket_message(
-                        profile, weights, state["analysis"], quotes, stability
+            for pref in INCOME_PREFS:
+                key = portfolio_key(profile, pref)
+                row = storage.active_basket(key)
+                if row is None:
+                    continue
+                weights = json.loads(row["weights_json"])
+                print("\n" + "=" * 78)
+                print(f"TELEGRAM MESAJI — {RISK_PROFILE_TR[profile]} · {INCOME_PREF_TR[pref]}")
+                print("=" * 78)
+                print(
+                    strip_html(
+                        formatting.basket_message(
+                            key,
+                            weights,
+                            state["analysis"],
+                            quotes,
+                            stability,
+                            income_pref=pref,
+                        )
                     )
                 )
-            )
-            print("\n--- /portfoy ---")
-            print(
-                strip_html(
-                    formatting.portfolio_message(portfolio.valuation(profile, quotes), bench)
+                print("\n--- /portfoy ---")
+                print(
+                    strip_html(
+                        formatting.portfolio_message(
+                            portfolio.valuation(key, quotes), bench
+                        )
+                    )
                 )
-            )
 
 
 if __name__ == "__main__":

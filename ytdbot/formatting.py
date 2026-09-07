@@ -6,9 +6,17 @@ import json
 from datetime import datetime, timedelta, timezone
 from html import escape as _html_escape
 
-from . import discipline, market, storage, universe
+from . import discipline, funds, market, storage, universe
 from .analysis import REGIME_EMOJI, REGIME_TR, Analysis
-from .baskets import RISK_PROFILE_DESC, RISK_PROFILE_EMOJI, RISK_PROFILE_TR
+from .baskets import (
+    INCOME_PREF_DESC,
+    INCOME_PREF_EMOJI,
+    INCOME_PREF_TR,
+    RISK_PROFILE_DESC,
+    RISK_PROFILE_EMOJI,
+    RISK_PROFILE_TR,
+    parse_portfolio_key,
+)
 from .config import settings
 from .portfolio import PortfolioView
 
@@ -78,20 +86,46 @@ def regime_line(analysis: Analysis) -> str:
 
 
 def weights_block(
-    weights: dict[str, float], quotes: dict[str, market.Quote] | None = None
+    weights: dict[str, float],
+    quotes: dict[str, market.Quote] | None = None,
+    capital: float | None = None,
 ) -> str:
     lines = []
     for key, weight in sorted(weights.items(), key=lambda kv: -kv[1]):
-        inst = universe.get(key)
-        # Enstruman adlari kendini anlatiyor; yalnizca hisselerde sektor bilgisi ekliyoruz.
-        detail = f" · <i>{escape(', '.join(inst.sectors))}</i>" if inst.sectors else ""
+        code = funds.display_code(key)
+        name = funds.display_name(key) if funds.is_fund_key(key) or key == "CASH" else (
+            universe.get(key).name if key in universe.BY_KEY else key
+        )
+        if key.startswith("TEFAS:") or key.startswith("YF:") or funds.get(key):
+            fund = funds.get(key)
+            venue = f" · {fund.venue_tr}" if fund else ""
+            label = f"<b>{escape(code)}</b> — {escape(fund.name if fund else name)}"
+            detail = f" · <i>{escape(fund.role_tr)}</i>{venue}" if fund else venue
+        elif key in universe.BY_KEY:
+            inst = universe.get(key)
+            label = escape(inst.name)
+            detail = f" · <i>{escape(', '.join(inst.sectors))}</i>" if inst.sectors else ""
+        else:
+            label = escape(name)
+            detail = ""
+
         suffix = ""
         if quotes and key not in ("CASH", "MONEY_MARKET"):
             quote = quotes.get(key)
             if quote:
-                suffix = f" <i>(20 günde {fmt_pct(quote.change_20d_pct, 1)})</i>"
+                suffix = f" <i>(20g {fmt_pct(quote.change_20d_pct, 1)})</i>"
+
+        budget_bit = ""
+        if capital and weight > 0 and key != "CASH":
+            allocated = capital * weight / 100.0
+            budget_bit = f" · ~{fmt_try(allocated, 0)}"
+            quote = quotes.get(key) if quotes else None
+            if quote and quote.price_try > 0:
+                qty = allocated / quote.price_try
+                budget_bit += f" (~{fmt_number(qty, 4)} pay)"
+
         lines.append(
-            f"• <b>%{fmt_number(weight, 1)}</b> — {escape(inst.name)}{detail}{suffix}"
+            f"• <b>%{fmt_number(weight, 1)}</b> — {label}{detail}{budget_bit}{suffix}"
         )
     return "\n".join(lines)
 
@@ -102,17 +136,29 @@ def basket_message(
     analysis: Analysis,
     quotes: dict[str, market.Quote],
     stability: dict,
+    income_pref: str = "growth",
+    capital: float | None = None,
 ) -> str:
     locked_until = stability.get("locked_until")
     days_held = stability.get("days_held")
+    profile = parse_portfolio_key(risk_profile)[0] if "_" in risk_profile else risk_profile
+    if profile not in RISK_PROFILE_TR:
+        profile = risk_profile
 
     parts = [
-        f"{RISK_PROFILE_EMOJI[risk_profile]} <b>{RISK_PROFILE_TR[risk_profile]} sepeti</b>",
-        f"<i>{escape(RISK_PROFILE_DESC[risk_profile])}</i>",
+        f"{RISK_PROFILE_EMOJI.get(profile, '🧺')} <b>{RISK_PROFILE_TR.get(profile, profile)} sepeti</b>",
+        f"{INCOME_PREF_EMOJI.get(income_pref, '')} <i>{escape(INCOME_PREF_TR.get(income_pref, income_pref))}</i>",
+        f"<i>{escape(RISK_PROFILE_DESC.get(profile, ''))}</i>",
         "",
+        "📦 <b>Sepet içeriği</b> (hisse / endeks / fon-ETF)",
         regime_line(analysis),
         "",
-        weights_block(weights, quotes),
+    ]
+    if capital:
+        parts.append(f"💵 Senin bakiye: <b>{fmt_try(capital, 0)}</b>")
+        parts.append("")
+    parts += [
+        weights_block(weights, quotes, capital),
         "",
         "🔒 <b>İstikrar</b>",
         f"• Sepet {fmt_number(days_held or 0, 1)} gündür yürürlükte"
@@ -141,14 +187,22 @@ def basket_message(
         parts += ["", "📌 <b>Gerekçeler</b>"]
         parts += [f"• {escape(driver)}" for driver in analysis.drivers]
 
-    parts += ["", DISCLAIMER]
+    parts += [
+        "",
+        "Tercih: /tercih · Bakiye: /bakiye · Profil: /profil",
+        "",
+        DISCLAIMER,
+    ]
     return "\n".join(parts)
 
 
 def portfolio_message(view: PortfolioView, bench: dict[str, float]) -> str:
     emoji = pnl_emoji(view.pnl_abs)
+    profile, pref = parse_portfolio_key(view.risk_profile)
+    title = RISK_PROFILE_TR.get(profile, profile)
+    pref_bit = f" · {INCOME_PREF_TR.get(pref, pref)}" if pref else ""
     parts = [
-        f"{RISK_PROFILE_EMOJI[view.risk_profile]} <b>{RISK_PROFILE_TR[view.risk_profile]} "
+        f"{RISK_PROFILE_EMOJI.get(profile, '🧺')} <b>{title}{pref_bit} "
         "— temsilî portföy</b>",
         "",
         f"Başlangıç: <b>{fmt_try(view.start_capital, 0)}</b> "
@@ -158,6 +212,7 @@ def portfolio_message(view: PortfolioView, bench: dict[str, float]) -> str:
         "",
         f"<i>{_running_text(view.days_running)} · "
         f"{int(view.trade_count)} işlem · komisyon {fmt_try(view.total_fees)}</i>",
+        "<i>Bu temsilî defterdir. Kendi bakiyen için /bakiye + /sepet.</i>",
     ]
 
     if view.positions:
@@ -269,7 +324,7 @@ def change_alert(
         new = new_weights.get(key, 0.0)
         if abs(new - old) < 0.05 and new == 0:
             continue
-        name = escape(universe.get(key).name)
+        name = escape(funds.display_name(key))
         if new <= 0.05:
             parts.append(f"• <s>{name}</s> — çıkarıldı (önceki %{fmt_number(old, 1)})")
         elif old <= 0.05:
@@ -307,8 +362,11 @@ def change_alert(
 
 
 def history_message(risk_profile: str, rows: list) -> str:
+    profile, pref = parse_portfolio_key(risk_profile)
+    title = RISK_PROFILE_TR.get(profile, profile)
     parts = [
-        f"🗓️ <b>{RISK_PROFILE_TR[risk_profile]} — değişim geçmişi</b>",
+        f"🗓️ <b>{title} — değişim geçmişi</b>",
+        f"<i>{INCOME_PREF_TR.get(pref, pref)}</i>",
         "",
     ]
     if not rows:
@@ -388,7 +446,9 @@ def welcome_message() -> str:
             f"Her risk profili için <b>{fmt_try(settings.start_capital_try, 0)}</b> temsilî "
             "sermaye ile başlıyorum ve kâr/zararı şeffaf şekilde takip ediyorum.",
             "",
-            "Önce risk profilini seç:",
+            "Önce risk profilini seç, sonra /tercih ile pasif gelir isteyip istemediğini belirt.",
+            "Bot hisse, endeks, altın ve uygunsa <b>yerli (TEFAS) veya yabancı fon/ETF</b> önerir.",
+            "Kendi bakiyeni /bakiye ile yazabilirsin; sepet tutarları ona göre ölçeklenir.",
         ]
     )
 
@@ -398,7 +458,9 @@ def help_message() -> str:
         [
             "📖 <b>Komutlar</b>",
             "",
-            "/sepet — Botun temsilî sepeti ve gerekçeleri",
+            "/sepet — Botun temsilî sepeti",
+            "/tercih — Pasif gelir / büyüme tercihi",
+            "/bakiye — Bot sepeti için senin bakiyen",
             "/sepetim — Senin takip sepetin (analiz / haber / vs)",
             "/portfoy — Temsilî portföyün kâr/zarar durumu",
             "/performans — Tüm risk profillerinin karşılaştırması",
@@ -667,8 +729,13 @@ def watchlist_analysis_message(analysis) -> str:
 def performance_overview(views: list[PortfolioView], bench: dict[str, float]) -> str:
     parts = ["🏁 <b>Performans karşılaştırması</b>", ""]
     for view in sorted(views, key=lambda v: -v.pnl_pct):
+        profile, pref = parse_portfolio_key(view.risk_profile)
+        label = (
+            f"{RISK_PROFILE_TR.get(profile, profile)} · "
+            f"{INCOME_PREF_TR.get(pref, pref)}"
+        )
         parts.append(
-            f"{RISK_PROFILE_EMOJI[view.risk_profile]} <b>{RISK_PROFILE_TR[view.risk_profile]}</b>: "
+            f"{RISK_PROFILE_EMOJI.get(profile, '🧺')} <b>{label}</b>: "
             f"{fmt_try(view.total_value)} · {pnl_emoji(view.pnl_abs)} "
             f"<b>{fmt_pct(view.pnl_pct)}</b> ({fmt_try(view.pnl_abs)})"
         )

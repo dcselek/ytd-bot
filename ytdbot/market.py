@@ -34,7 +34,11 @@ class Quote:
 
     @property
     def name(self) -> str:
-        return universe.get(self.instrument_key).name
+        from . import funds
+
+        if self.instrument_key in universe.BY_KEY:
+            return universe.get(self.instrument_key).name
+        return funds.display_name(self.instrument_key)
 
 
 def _pct_change(series: pd.Series, periods: int) -> float:
@@ -112,7 +116,16 @@ def fetch_quotes() -> dict[str, Quote]:
         "CASH": cash_quote(),
     }
 
-    tickers = universe.market_data_tickers()
+    tickers = list(universe.market_data_tickers())
+    try:
+        from . import funds
+
+        for yt in funds.yahoo_fund_tickers():
+            if yt not in tickers:
+                tickers.append(yt)
+    except Exception:  # noqa: BLE001
+        pass
+
     close = pd.DataFrame()
     try:
         close = _download_close(tickers)
@@ -157,7 +170,25 @@ def fetch_quotes() -> dict[str, Quote]:
             as_of=as_of,
         )
 
+    _merge_yahoo_funds(quotes, close, usdtry_series)
     _fill_from_cache(quotes)
+
+    # Opsiyonel TEFAS fon katalogu
+    try:
+        from . import funds, tefas
+
+        tefas_quotes = tefas.fetch_quotes(funds.tefas_codes())
+        for key, tq in tefas_quotes.items():
+            quotes[key] = Quote(
+                instrument_key=key,
+                price_try=tq.price_try,
+                change_1d_pct=tq.change_1d_pct,
+                change_5d_pct=tq.change_5d_pct,
+                change_20d_pct=tq.change_20d_pct,
+                as_of=tq.as_of,
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("TEFAS fon fiyatlari sepete eklenemedi: %s", exc)
 
     storage.save_prices(
         {
@@ -194,6 +225,46 @@ def _to_try_series(
     if inst.currency == "USD_OUNCE":  # ons altin -> gram altin TL
         return series * aligned / OUNCE_IN_GRAM
     return None
+
+
+def _merge_yahoo_funds(
+    quotes: dict[str, Quote],
+    close: pd.DataFrame,
+    usdtry_series: pd.Series | None,
+) -> None:
+    """Katalogdaki yabanci ETF'leri (YF:XXX) TL fiyata cevirip quotes'a ekler."""
+    from . import funds
+
+    if close is None or close.empty or usdtry_series is None:
+        return
+
+    for fund in funds.FUNDS:
+        if fund.venue != funds.VENUE_YAHOO or not fund.yahoo_ticker:
+            continue
+        ticker = fund.yahoo_ticker
+        if ticker not in close.columns:
+            continue
+        series = close[ticker].dropna()
+        if series.empty:
+            continue
+        aligned = usdtry_series.reindex(series.index).ffill().bfill()
+        try_series = series * aligned
+        if try_series.empty:
+            continue
+        last_index = try_series.index[-1]
+        as_of = (
+            last_index.to_pydatetime().replace(tzinfo=timezone.utc)
+            if hasattr(last_index, "to_pydatetime")
+            else storage.utcnow()
+        )
+        quotes[fund.key] = Quote(
+            instrument_key=fund.key,
+            price_try=float(try_series.iloc[-1]),
+            change_1d_pct=_pct_change(try_series, 1),
+            change_5d_pct=_pct_change(try_series, 5),
+            change_20d_pct=_pct_change(try_series, 20),
+            as_of=as_of,
+        )
 
 
 def _fill_from_cache(quotes: dict[str, Quote]) -> None:
@@ -235,7 +306,14 @@ def cached_quotes() -> dict[str, Quote]:
         "CASH": cash_quote(),
     }
     for key, row in storage.load_cached_prices().items():
-        if key in quotes or key not in universe.BY_KEY:
+        if key in quotes:
+            continue
+        # Universe veya TEFAS fon anahtarlari
+        if (
+            key not in universe.BY_KEY
+            and not key.startswith("TEFAS:")
+            and not key.startswith("YF:")
+        ):
             continue
         quotes[key] = Quote(
             instrument_key=key,

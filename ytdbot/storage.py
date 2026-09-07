@@ -14,6 +14,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS subscribers (
     chat_id      INTEGER PRIMARY KEY,
     risk_profile TEXT    NOT NULL DEFAULT 'mid',
+    income_pref  TEXT    NOT NULL DEFAULT 'growth',
+    bot_capital  REAL,
     notify       INTEGER NOT NULL DEFAULT 1,
     created_at   TEXT    NOT NULL
 );
@@ -167,8 +169,20 @@ def connect() -> sqlite3.Connection:
         _connection.execute("PRAGMA journal_mode=WAL")
         _connection.execute("PRAGMA foreign_keys=ON")
         _connection.executescript(SCHEMA)
+        _migrate(_connection)
         _connection.commit()
     return _connection
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Mevcut DB'lere yeni kolonlar ekler."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(subscribers)").fetchall()}
+    if "income_pref" not in cols:
+        conn.execute(
+            "ALTER TABLE subscribers ADD COLUMN income_pref TEXT NOT NULL DEFAULT 'growth'"
+        )
+    if "bot_capital" not in cols:
+        conn.execute("ALTER TABLE subscribers ADD COLUMN bot_capital REAL")
 
 
 @contextmanager
@@ -204,18 +218,52 @@ def set_state(key: str, value: Any) -> None:
 # --- subscribers -----------------------------------------------------------
 
 
-def upsert_subscriber(chat_id: int, risk_profile: str | None = None) -> None:
+def upsert_subscriber(
+    chat_id: int,
+    risk_profile: str | None = None,
+    income_pref: str | None = None,
+) -> None:
     with tx() as conn:
         conn.execute(
-            "INSERT INTO subscribers (chat_id, risk_profile, created_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(chat_id) DO NOTHING",
-            (chat_id, risk_profile or "mid", iso(utcnow())),
+            "INSERT INTO subscribers (chat_id, risk_profile, income_pref, created_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(chat_id) DO NOTHING",
+            (chat_id, risk_profile or "mid", income_pref or "growth", iso(utcnow())),
         )
         if risk_profile:
             conn.execute(
                 "UPDATE subscribers SET risk_profile = ? WHERE chat_id = ?",
                 (risk_profile, chat_id),
             )
+        if income_pref:
+            conn.execute(
+                "UPDATE subscribers SET income_pref = ? WHERE chat_id = ?",
+                (income_pref, chat_id),
+            )
+
+
+def set_bot_capital(chat_id: int, amount: float | None) -> None:
+    with tx() as conn:
+        conn.execute(
+            "UPDATE subscribers SET bot_capital = ? WHERE chat_id = ?",
+            (amount, chat_id),
+        )
+
+
+def get_bot_capital(chat_id: int) -> float | None:
+    row = get_subscriber(chat_id)
+    if row is None:
+        return None
+    try:
+        value = row["bot_capital"]
+    except (KeyError, IndexError):
+        return None
+    if value is None:
+        return None
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return None
+    return amount if amount > 0 else None
 
 
 def get_subscriber(chat_id: int) -> sqlite3.Row | None:

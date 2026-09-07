@@ -635,12 +635,20 @@ def alert_hits(chat_id: int, snap: WatchSnapshot | None = None) -> list[WatchIte
 
 
 def compare_to_bot(chat_id: int, risk_profile: str = "mid") -> CompareResult:
+    """risk_profile: risk veya portfolio_key (ornek mid / mid_passive)."""
+    from .baskets import parse_portfolio_key
+
     snap = snapshot(chat_id)
     quotes = market.cached_quotes()
-    # Bot sepetinin enstrumanlarindan agirlikli 20g (universe key'leri)
-    row = storage.active_basket(risk_profile)
+    profile, pref = parse_portfolio_key(risk_profile)
+    from .baskets import portfolio_key as _pkey
+
+    storage_key = risk_profile if "_" in risk_profile else _pkey(profile, pref)
+    row = storage.active_basket(storage_key)
+    if row is None and storage_key != profile:
+        row = storage.active_basket(profile)
     bot_20d: float | None = None
-    bot_name = risk_profile
+    bot_name = storage_key
     if row is not None:
         import json
 
@@ -661,7 +669,7 @@ def compare_to_bot(chat_id: int, risk_profile: str = "mid") -> CompareResult:
     return CompareResult(
         watch_20d=snap.weighted_20d_pct,
         bot_20d=bot_20d,
-        bot_profile=risk_profile,
+        bot_profile=storage_key,
         watch_items=len(snap.items),
         bot_name=bot_name,
     )
